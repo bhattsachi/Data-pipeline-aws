@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, stg]
+  ArtifactBucket:
+    Type: String
+
+Resources:
+
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${Env}-orders-job"
+      Role: arn:aws:iam::123456789012:role/glue-role
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${ArtifactBucket}/glue/scripts/orders_job.py"
+      DefaultArguments:
+        "--job-language": "python"
+        "--ENV": !Ref Env
+
+  ETLLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Env}-etl-trigger"
+      Runtime: python3.10
+      Handler: handler.lambda_handler
+      Role: arn:aws:iam::123456789012:role/lambda-role
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: lambda/trigger.zip
+      Environment:
+        Variables:
+          ENV: !Ref Env
+
+  ETLStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${Env}-etl-workflow"
+      RoleArn: arn:aws:iam::123456789012:role/stepfn-role
+      DefinitionString: !Sub |
+        {
+          "StartAt": "RunGlue",
+          "States": {
+            "RunGlue": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${Env}-orders-job"
+              },
+              "End": true
+            }
+          }
+        }

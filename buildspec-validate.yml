@@ -1,0 +1,15 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.10
+  build:
+    commands:
+      - echo "Validating Glue scripts"
+      - python -m py_compile glue/scripts/*.py
+
+      - echo "Validating Step Functions ASL"
+      - python -m json.tool stepfunctions/etl.asl.json
+
+      - echo "Validation completed"
