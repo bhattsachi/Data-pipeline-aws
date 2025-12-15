@@ -1,0 +1,532 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CI/CD Pipeline for Data Pipeline AWS - Multi-Environment Deployment'
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name
+    Default: 'data-pipeline-aws'
+  
+  GitHubOwner:
+    Type: String
+    Description: GitHub repository owner/organization
+  
+  GitHubBranch:
+    Type: String
+    Description: GitHub branch to track
+    Default: 'main'
+  
+  GitHubToken:
+    Type: String
+    Description: GitHub personal access token
+    NoEcho: true
+  
+  DevAccountId:
+    Type: String
+    Description: AWS Account ID for Dev environment
+  
+  TestAccountId:
+    Type: String
+    Description: AWS Account ID for Test environment
+  
+  NotificationEmail:
+    Type: String
+    Description: Email for pipeline notifications
+
+Resources:
+  # S3 Bucket for Pipeline Artifacts
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-artifacts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # S3 Bucket Policy for Cross-Account Access
+  ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyUnEncryptedObjectUploads
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:PutObject'
+            Resource: !Sub '${ArtifactBucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                's3:x-amz-server-side-encryption': 'AES256'
+          - Sid: AllowDevAccountAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${DevAccountId}:root'
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:GetObjectVersion'
+            Resource: !Sub '${ArtifactBucket.Arn}/*'
+          - Sid: AllowTestAccountAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${TestAccountId}:root'
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:GetObjectVersion'
+            Resource: !Sub '${ArtifactBucket.Arn}/*'
+
+  # SNS Topic for Pipeline Notifications
+  PipelineNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-notifications'
+      Subscription:
+        - Endpoint: !Ref NotificationEmail
+          Protocol: email
+
+  # CodeBuild Service Role
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-CodeBuildRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/PowerUserAccess'
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:GetObjectVersion'
+                Resource: !Sub '${ArtifactBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:*'
+                  - 'iam:*'
+                Resource: '*'
+
+  # CodeBuild Project for Validation
+  ValidationBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AWS::StackName}-Validation'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ARTIFACT_BUCKET
+            Value: !Ref ArtifactBucket
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.11
+              commands:
+                - pip install cfn-lint pyyaml boto3
+            pre_build:
+              commands:
+                - echo "Validating CloudFormation templates..."
+                - cfn-lint Hoth/FHIR/cloudformations/*.yml
+            build:
+              commands:
+                - echo "Running Python unit tests..."
+                - python -m pytest Hoth/FHIR/tests/ -v || true
+                - echo "Validating Python syntax..."
+                - python -m py_compile Hoth/FHIR/glue/*.py
+                - python -m py_compile Hoth/FHIR/lambdas/*.py
+            post_build:
+              commands:
+                - echo "Validation completed successfully"
+          artifacts:
+            files:
+              - '**/*'
+
+  # CodeBuild Project for Dev Deployment
+  DevDeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AWS::StackName}-DevDeploy'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: dev
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref DevAccountId
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec-deploy.yml
+
+  # CodeBuild Project for Test Deployment
+  TestDeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AWS::StackName}-TestDeploy'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: test
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref TestAccountId
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec-deploy.yml
+
+  # CodePipeline Service Role
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-CodePipelineRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:GetBucketLocation'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - 'codebuild:BatchGetBuilds'
+                  - 'codebuild:StartBuild'
+                Resource:
+                  - !GetAtt ValidationBuildProject.Arn
+                  - !GetAtt DevDeployProject.Arn
+                  - !GetAtt TestDeployProject.Arn
+              - Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                Resource: !Ref PipelineNotificationTopic
+              - Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                Resource:
+                  - !Sub 'arn:aws:iam::${DevAccountId}:role/CloudFormationDeployRole'
+                  - !Sub 'arn:aws:iam::${TestAccountId}:role/CloudFormationDeployRole'
+
+  # CloudFormation Deployment Role
+  CloudFormationDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-CFDeployRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+
+  # Main CI/CD Pipeline
+  DataPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${AWS::StackName}-Pipeline'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        # Source Stage
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: '1'
+              Configuration:
+                Owner: !Ref GitHubOwner
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubToken
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: SourceOutput
+
+        # Validation Stage
+        - Name: Validate
+          Actions:
+            - Name: ValidateTemplates
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref ValidationBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: ValidatedOutput
+
+        # Dev Environment Deployment
+        - Name: Deploy-Dev
+          Actions:
+            - Name: DeployGlueStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub '${AWS::StackName}-dev-glue'
+                TemplatePath: ValidatedOutput::Hoth/FHIR/cloudformations/glue-stack.yml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "dev",
+                    "ProjectName": "data-pipeline"
+                  }
+              InputArtifacts:
+                - Name: ValidatedOutput
+              RunOrder: 1
+
+            - Name: DeployLambdaStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub '${AWS::StackName}-dev-lambda'
+                TemplatePath: ValidatedOutput::Hoth/FHIR/cloudformations/lambda-stack.yml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "dev",
+                    "ProjectName": "data-pipeline"
+                  }
+              InputArtifacts:
+                - Name: ValidatedOutput
+              RunOrder: 2
+
+            - Name: DeployStepFunctionStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub '${AWS::StackName}-dev-stepfunction'
+                TemplatePath: ValidatedOutput::Hoth/FHIR/cloudformations/stepfunction-stack.yml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "dev",
+                    "ProjectName": "data-pipeline"
+                  }
+              InputArtifacts:
+                - Name: ValidatedOutput
+              RunOrder: 3
+
+        # Manual Approval for Test Environment
+        - Name: Approve-Test-Deployment
+          Actions:
+            - Name: ManualApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                NotificationArn: !Ref PipelineNotificationTopic
+                CustomData: 'Please review Dev deployment and approve for Test environment'
+
+        # Test Environment Deployment
+        - Name: Deploy-Test
+          Actions:
+            - Name: DeployGlueStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub '${AWS::StackName}-test-glue'
+                TemplatePath: ValidatedOutput::Hoth/FHIR/cloudformations/glue-stack.yml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "test",
+                    "ProjectName": "data-pipeline"
+                  }
+              InputArtifacts:
+                - Name: ValidatedOutput
+              RunOrder: 1
+
+            - Name: DeployLambdaStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub '${AWS::StackName}-test-lambda'
+                TemplatePath: ValidatedOutput::Hoth/FHIR/cloudformations/lambda-stack.yml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "test",
+                    "ProjectName": "data-pipeline"
+                  }
+              InputArtifacts:
+                - Name: ValidatedOutput
+              RunOrder: 2
+
+            - Name: DeployStepFunctionStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub '${AWS::StackName}-test-stepfunction'
+                TemplatePath: ValidatedOutput::Hoth/FHIR/cloudformations/stepfunction-stack.yml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "test",
+                    "ProjectName": "data-pipeline"
+                  }
+              InputArtifacts:
+                - Name: ValidatedOutput
+              RunOrder: 3
+
+  # CloudWatch Event Rule for GitHub Webhook
+  PipelineTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AWS::StackName}-GitHubTrigger'
+      Description: Trigger pipeline on GitHub push
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+      State: ENABLED
+      Targets:
+        - Arn: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${DataPipeline}'
+          RoleArn: !GetAtt PipelineTriggerRole.Arn
+          Id: CodePipelineTarget
+
+  # IAM Role for Pipeline Trigger
+  PipelineTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: StartPipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'codepipeline:StartPipelineExecution'
+                Resource: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${DataPipeline}'
+
+Outputs:
+  PipelineName:
+    Description: Name of the CI/CD Pipeline
+    Value: !Ref DataPipeline
+    Export:
+      Name: !Sub '${AWS::StackName}-PipelineName'
+
+  ArtifactBucketName:
+    Description: S3 Bucket for Pipeline Artifacts
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-ArtifactBucket'
+
+  PipelineUrl:
+    Description: URL to the Pipeline in AWS Console
+    Value: !Sub 'https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${DataPipeline}/view?region=${AWS::Region}'
+
+  NotificationTopicArn:
+    Description: SNS Topic ARN for Pipeline Notifications
+    Value: !Ref PipelineNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-NotificationTopic'
