@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Parameters:
   Env:
     Type: String
-    AllowedValues: [dev, stg]
+    AllowedValues: [dev, test]
   ArtifactBucket:
     Type: String
 
