@@ -1,39 +1,116 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: '2025-12-16'
 Description: 'CI/CD Pipeline for Data Pipeline AWS - Multi-Environment Deployment'
 
 Parameters:
+###############################################
+  #Account specific parameters  
+###############################################
+  CodeBuildServiceRole:
+    Type: String
+    Description: CodeBuild Service Role
+    Default: cross-account-codepipeline-deploy-role 
+##############################################
+  #GitHub specific parameters
+############################################## 
   GitHubRepo:
     Type: String
     Description: GitHub repository name
-    Default: 'data-pipeline-aws'
-  
-  GitHubOwner:
-    Type: String
-    Description: GitHub repository owner/organization
-  
+    Default: data-pipeline-aws
+   
   GitHubBranch:
     Type: String
     Description: GitHub branch to track
     Default: 'main'
   
-  GitHubToken:
+  ConnectionID:
     Type: String
-    Description: GitHub personal access token
-    NoEcho: true
-  
-  DevAccountId:
-    Type: String
-    Description: AWS Account ID for Dev environment
-  
-  TestAccountId:
-    Type: String
-    Description: AWS Account ID for Test environment
-  
-  NotificationEmail:
-    Type: String
-    Description: Email for pipeline notifications
+    Description: GitHub Connection ID
+    Default: 940599f6-6382-4ffb-8c8d-67116a14389f
+
+##############################################
+  #Codepipeline specific parameters
+##############################################
+  SourceArtifact:
+      Type: String
+      Description: Name of the source artifact
+      Default: SourceArtifact
+  BuildArtifact:
+      Type: String
+      Description: Name of the build artifact
+      Default: BuildArtifact
+  ArtifactStoreLocation:
+      Type: String
+      Description: Artifact store S3 bucket name
+      Default: !Sub '${AWS::StackName}-artifacts-${AWS::AccountId}'
+  ProjectName:
+      Type: String
+      Description: Name of the CodeBuild project
+      Default: !Sub '${AWS::StackName}-CodeBuildProject'
+  Component:
+      Type: String
+      Description: Component to be deployed
+      Default: aws-resources
+  AWSEnvironment:
+      Type: String
+      Description: AWS Environment where the codepipeline is deployed
+      Default: dev
+  Environment:
+      Type: String
+      AllowedValues:
+        - dev
+        - test
+        - prod
+      Description: The environment key is used to designate the production level of the associated AWS resources.
+      Default: dev
+  PipelineRole:
+      Type: String
+      Description: Role used by the CodePipeline
+      Default: !Sub cross-account-codepipeline-deploy-role
 
 Resources:
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:  
+      ArtifactStore:
+        Type: S3
+        Location: !Sub '${ArtifactStoreLocation}'
+      Name: !Join ["-",[', !Ref Environment, !Ref ProjectName, !Ref Component, pipeline']]
+      RoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${PipelineRole}'
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: GitHub
+                Version: '1'
+              RunOrder: 1
+              Configuration:
+                ConnectionArn: !sub "arn:aws:codestar-connections:${AWS::Region}:${AWS::AccountId}:connection/${ConnectionID}"
+                FullRepositoryId: !Ref GitHubRepo
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+                DetectChanges: false
+              OutputArtifacts:
+                - Name: !Ref SourceArtifact
+        - Name: Build
+          Actions:
+            - Name: BuildFromSourceAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              RunOrder: 1
+              InputArtifacts:
+                - Name: !Ref SourceArtifact
+              OutputArtifacts:
+                - Name: !Ref BuildArtifact
+              Configuration:
+                ProjectName: !Ref ProjectName
+  
+      
   # S3 Bucket for Pipeline Artifacts
   ArtifactBucket:
     Type: AWS::S3::Bucket
@@ -90,14 +167,6 @@ Resources:
               - 's3:GetObjectVersion'
             Resource: !Sub '${ArtifactBucket.Arn}/*'
 
-  # SNS Topic for Pipeline Notifications
-  PipelineNotificationTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub '${AWS::StackName}-notifications'
-      Subscription:
-        - Endpoint: !Ref NotificationEmail
-          Protocol: email
 
   # CodeBuild Service Role
   CodeBuildServiceRole:
@@ -136,50 +205,38 @@ Resources:
                   - 'iam:*'
                 Resource: '*'
 
-  # CodeBuild Project for Validation
-  ValidationBuildProject:
+  # Build CodeBuild Project 
+  CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Sub '${AWS::StackName}-Validation'
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Artifacts:
         Type: CODEPIPELINE
+        Packaging: NONE
+      Description: !Sub CodeBuild Project for ${ProjectName}-$ {Component} 
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/standard:7.0
         EnvironmentVariables:
-          - Name: ARTIFACT_BUCKET
-            Value: !Ref ArtifactBucket
+          - Type: PLAINTEXT
+            Name: ENVIRONMENT
+            Value: !Ref AWSEnvironment
+      Name: !Sub "${Environment}-${ProjectName}-${Component}"    
+      ServiceRole: !sub "arn:aws:iam::${AWS::AccountId}:role/${CodeBuildServiceRole}"
       Source:
         Type: CODEPIPELINE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            install:
-              runtime-versions:
-                python: 3.11
-              commands:
-                - pip install cfn-lint pyyaml boto3
-            pre_build:
-              commands:
-                - echo "Validating CloudFormation templates..."
-                - cfn-lint Hoth/FHIR/cloudformations/*.yml
-            build:
-              commands:
-                - echo "Running Python unit tests..."
-                - python -m pytest Hoth/FHIR/tests/ -v || true
-                - echo "Validating Python syntax..."
-                - python -m py_compile Hoth/FHIR/glue/*.py
-                - python -m py_compile Hoth/FHIR/lambdas/*.py
-            post_build:
-              commands:
-                - echo "Validation completed successfully"
-          artifacts:
-            files:
-              - '**/*'
+        InsecureSsl: false
+        BuildSpec: data-pipeline-aws/Hoth/FHIR/buildspec.yml
+      Tags:
+        - Key: Environment
+          Value: !Ref AWSEnvironment
+        - Key: Project
+          Value: !Ref ProjectName
+      TimeoutInMinutes: 10
 
-  # CodeBuild Project for Dev Deployment
+  # Deploy CodeBuild Project in Dev Environment
   DevDeployProject:
     Type: AWS::CodeBuild::Project
     Properties:

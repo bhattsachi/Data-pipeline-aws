@@ -1,6 +1,6 @@
 # Pipeline 
 
-cicd-pipeline-stack.yml - Main CloudFormation template that creates:
+pipeline-stack.yml - Main CloudFormation template that creates:
 CodePipeline with 5 stages (Source, Validation, Dev Deploy, Approval, Test Deploy)
 3 CodeBuild projects for validation and deployment
 S3 artifact bucket with cross-account access
