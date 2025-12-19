@@ -109,3 +109,11 @@ GitHub repository containing:
 • buildspec.yml
 • Environment-specific parameter file
 The solution must deploy successfully resources mentioned above in a same AWS account
+
+#########################################
+
+## Architecture 
+ 
+ ![alt text](image-1.png)
+
+

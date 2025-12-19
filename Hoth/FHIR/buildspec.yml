@@ -1,24 +1,151 @@
 version: 0.2
-          phases:
-            install:
-              runtime-versions:
-                python: 3.11
-              commands:
-                - pip install cfn-lint pyyaml boto3
-            pre_build:
-              commands:
-                - echo "Validating CloudFormation templates..."
-                - cfn-lint Hoth/FHIR/cloudformations/*.yml
-            build:
-              commands:
-                - echo "Running Python unit tests..."
-                - python -m pytest Hoth/FHIR/tests/ -v || true
-                - echo "Validating Python syntax..."
-                - python -m py_compile Hoth/FHIR/glue/*.py
-                - python -m py_compile Hoth/FHIR/lambdas/*.py
-            post_build:
-              commands:
-                - echo "Validation completed successfully"
-          artifacts:
-            files:
-              - '**/*'
+
+# ============================================================================
+# ENVIRONMENT VARIABLES
+# ============================================================================
+env:
+  variables:
+    SAM_CLI_TELEMETRY: 0
+  exported-variables:
+    - PACKAGED_TEMPLATE_PATH
+
+# ============================================================================
+# BUILD PHASES
+# ============================================================================
+phases:
+  # ----- INSTALL PHASE -----
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "===== INSTALL PHASE ====="
+      - echo "Installing AWS SAM CLI..."
+      - pip install --upgrade pip
+      - pip install aws-sam-cli
+      - sam --version
+      - echo "SAM CLI installed successfully"
+
+  # ----- PRE-BUILD PHASE -----
+  pre_build:
+    commands:
+      - echo "===== PRE-BUILD PHASE ====="
+      - echo "Build started on $(date)"
+      - echo "Environment: ${ENVIRONMENT_NAME}"
+      - echo "Application: ${APPLICATION_NAME}"
+      - echo "Artifact Bucket: ${ARTIFACT_BUCKET}"
+      
+      # Display directory structure
+      - echo "Repository structure:"
+      - ls -la
+      - echo ""
+      
+      # Validate SAM template
+      - echo "Validating SAM template..."
+      - sam validate --template serverless-app-template.yaml --lint
+      - echo "SAM template validation successful"
+      
+      # Validate CloudFormation syntax
+      - echo "Validating CloudFormation syntax..."
+      - aws cloudformation validate-template --template-body file://serverless-app-template.yaml
+      - echo "CloudFormation validation successful"
+      
+      # Check Lambda code exists
+      - echo "Checking Lambda code..."
+      - test -f lambda/app.py && echo "Lambda code found" || (echo "ERROR: lambda/app.py not found" && exit 1)
+      
+      # Check environment config exists
+      - echo "Checking environment configuration..."
+      - |
+        if [ -f "${ENVIRONMENT_NAME}.json" ]; then
+          echo "Found ${ENVIRONMENT_NAME}.json"
+          cat "${ENVIRONMENT_NAME}.json"
+        else
+          echo "WARNING: ${ENVIRONMENT_NAME}.json not found, using defaults"
+        fi
+
+  # ----- BUILD PHASE -----
+  build:
+    commands:
+      - echo "===== BUILD PHASE ====="
+      
+      # Package SAM application
+      - echo "Packaging SAM application..."
+      - |
+        sam package \
+          --template-file serverless-app-template.yaml \
+          --output-template-file packaged-template.yaml \
+          --s3-bucket ${ARTIFACT_BUCKET} \
+          --s3-prefix sam-artifacts/${APPLICATION_NAME}/${ENVIRONMENT_NAME}
+      
+      - echo "SAM package completed successfully"
+      
+      # Verify packaged template was created
+      - test -f packaged-template.yaml && echo "Packaged template created" || (echo "ERROR: packaged-template.yaml not created" && exit 1)
+      
+      # Display packaged template (first 50 lines)
+      - echo "Packaged template preview:"
+      - head -50 packaged-template.yaml
+      
+      # Create configuration file for CloudFormation deploy
+      - echo "Creating deployment configuration..."
+      - |
+        if [ -f "${ENVIRONMENT_NAME}.json" ]; then
+          # Use environment-specific config
+          cp "${ENVIRONMENT_NAME}.json" config.json
+        else
+          # Create default config
+          cat > config.json << EOF
+        {
+          "Parameters": {
+            "EnvironmentName": "${ENVIRONMENT_NAME}",
+            "ApplicationName": "${APPLICATION_NAME}",
+            "LogRetentionDays": "14"
+          },
+          "Tags": {
+            "Environment": "${ENVIRONMENT_NAME}",
+            "Application": "${APPLICATION_NAME}",
+            "ManagedBy": "CloudFormation"
+          }
+        }
+        EOF
+        fi
+      
+      - echo "Configuration file:"
+      - cat config.json
+      
+      # Set exported variable
+      - export PACKAGED_TEMPLATE_PATH=packaged-template.yaml
+
+  # ----- POST-BUILD PHASE -----
+  post_build:
+    commands:
+      - echo "===== POST-BUILD PHASE ====="
+      - echo "Build completed on $(date)"
+      
+      # List artifacts
+      - echo "Build artifacts:"
+      - ls -la
+      
+      # Verify all required files exist
+      - echo "Verifying artifacts..."
+      - test -f packaged-template.yaml && echo "✓ packaged-template.yaml" || echo "✗ packaged-template.yaml MISSING"
+      - test -f config.json && echo "✓ config.json" || echo "✗ config.json MISSING"
+      
+      - echo "===== BUILD COMPLETE ====="
+
+# ============================================================================
+# ARTIFACTS
+# ============================================================================
+artifacts:
+  files:
+    - packaged-template.yaml
+    - config.json
+  discard-paths: yes
+  name: build-output
+
+# ============================================================================
+# CACHE
+# ============================================================================
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'
