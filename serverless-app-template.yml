@@ -1,0 +1,270 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  Serverless REST API Application
+  - Lambda function (Python 3.12)
+  - API Gateway REST API
+  - Secrets Manager secret
+
+# ============================================================================
+# PARAMETERS
+# ============================================================================
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    Description: Deployment environment name
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  ApplicationName:
+    Type: String
+    Default: serverless-app
+    Description: Application name for resource naming
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: CloudWatch Logs retention period
+    AllowedValues:
+      - 1
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+
+# ============================================================================
+# GLOBALS
+# ============================================================================
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Tracing: Active
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref EnvironmentName
+        APPLICATION_NAME: !Ref ApplicationName
+        LOG_LEVEL: INFO
+
+# ============================================================================
+# RESOURCES
+# ============================================================================
+Resources:
+
+  # ==========================================================================
+  # SECRETS MANAGER
+  # ==========================================================================
+  
+  # Application secret
+  ApplicationSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${ApplicationName}/${EnvironmentName}/app-secret
+      Description: !Sub Application secret for ${ApplicationName} (${EnvironmentName})
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"app_name": "${ApplicationName}", "environment": "${EnvironmentName}"}'
+        GenerateStringKey: api_key
+        PasswordLength: 32
+        ExcludePunctuation: true
+      Tags:
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ==========================================================================
+  # LAMBDA FUNCTION
+  # ==========================================================================
+  
+  # Lambda execution role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ApplicationName}-lambda-role-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        # Basic Lambda execution permissions
+        - PolicyName: LambdaBasicExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationName}-${EnvironmentName}-*
+        
+        # Secrets Manager read access (least privilege)
+        - PolicyName: SecretsManagerReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref ApplicationSecret
+        
+        # X-Ray tracing permissions
+        - PolicyName: XRayTracing
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
+      Tags:
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # Lambda function
+  HealthCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${ApplicationName}-${EnvironmentName}-health
+      Description: Health check endpoint that reads from Secrets Manager
+      Handler: app.lambda_handler
+      CodeUri: lambda/
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          SECRET_ARN: !Ref ApplicationSecret
+          SECRET_NAME: !Sub ${ApplicationName}/${EnvironmentName}/app-secret
+      Events:
+        HealthCheck:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /health
+            Method: POST
+        TestEndpoint:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /test
+            Method: POST
+      Tags:
+        Application: !Ref ApplicationName
+        Environment: !Ref EnvironmentName
+
+  # Lambda CloudWatch Log Group
+  HealthCheckFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${HealthCheckFunction}
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ==========================================================================
+  # API GATEWAY
+  # ==========================================================================
+  
+  # REST API
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub ${ApplicationName}-api-${EnvironmentName}
+      Description: !Sub REST API for ${ApplicationName} (${EnvironmentName})
+      StageName: !Ref EnvironmentName
+      EndpointConfiguration:
+        Type: REGIONAL
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: /*
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiGatewayAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId",
+          "ip":"$context.identity.sourceIp",
+          "caller":"$context.identity.caller",
+          "user":"$context.identity.user",
+          "requestTime":"$context.requestTime",
+          "httpMethod":"$context.httpMethod",
+          "resourcePath":"$context.resourcePath",
+          "status":"$context.status",
+          "protocol":"$context.protocol",
+          "responseLength":"$context.responseLength",
+          "integrationLatency":"$context.integrationLatency",
+          "responseLatency":"$context.responseLatency"}
+      Tags:
+        Application: !Ref ApplicationName
+        Environment: !Ref EnvironmentName
+
+  # API Gateway Access Log Group
+  ApiGatewayAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/${ApplicationName}-api-${EnvironmentName}
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+# ============================================================================
+# OUTPUTS
+# ============================================================================
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiEndpoint
+
+  HealthEndpoint:
+    Description: Health check endpoint (POST)
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}/health
+
+  TestEndpoint:
+    Description: Test endpoint (POST)
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}/test
+
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref HealthCheckFunction
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaFunction
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt HealthCheckFunction.Arn
+
+  SecretArn:
+    Description: ARN of the Secrets Manager secret
+    Value: !Ref ApplicationSecret
+    Export:
+      Name: !Sub ${AWS::StackName}-SecretArn
+
+  ApiGatewayId:
+    Description: API Gateway REST API ID
+    Value: !Ref ApiGateway
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiGatewayId
