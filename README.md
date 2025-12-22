@@ -1047,3 +1047,35 @@ aws iam get-role-policy \
   --policy-name CodeConnectionsAccess \
   --query "PolicyDocument" \
   --output json
+
+# Start new pipeline execution
+aws codepipeline start-pipeline-execution \
+  --name serverless-app-pipeline-dev
+
+# Watch the status
+watch -n 5 "aws codepipeline get-pipeline-state \
+  --name serverless-app-pipeline-dev \
+  --query 'stageStates[*].[stageName,latestExecution.status]' \
+  --output table"
+```
+
+### Expected Result
+```
+------------------------------
+|     GetPipelineState       |
++----------+-----------------+
+|  Source  |  InProgress     |  ← Should progress now!
+|  Build   |  None           |
+|  Deploy  |  None           |
++----------+-----------------+
+```
+
+Then:
+```
+------------------------------
+|     GetPipelineState       |
++----------+-----------------+
+|  Source  |  Succeeded      |  ← Fixed!
+|  Build   |  InProgress     |
+|  Deploy  |  None           |
++----------+-----------------+  
