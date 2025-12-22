@@ -982,3 +982,68 @@ aws codepipeline get-pipeline-state \
   --query "stageStates[?stageName=='Source'].actionStates[0].latestExecution.errorDetails" \
   --output json
 ```
+```
+#!/bin/bash
+
+# ════════════════════════════════════════════════════════════════════════════
+# UPDATE THESE VALUES
+# ════════════════════════════════════════════════════════════════════════════
+PIPELINE_NAME="serverless-app-pipeline-dev"
+CONNECTION_ARN="arn:aws:codeconnections:us-east-1:123456789012:connection/your-id"
+
+# ════════════════════════════════════════════════════════════════════════════
+# GET ROLE NAME
+# ════════════════════════════════════════════════════════════════════════════
+echo "Getting pipeline role..."
+ROLE_ARN=$(aws codepipeline get-pipeline \
+  --name $PIPELINE_NAME \
+  --query "pipeline.roleArn" \
+  --output text)
+ROLE_NAME=$(echo $ROLE_ARN | cut -d'/' -f2)
+echo "Role: $ROLE_NAME"
+
+# ════════════════════════════════════════════════════════════════════════════
+# ADD POLICY
+# ════════════════════════════════════════════════════════════════════════════
+echo "Adding CodeConnections permission..."
+aws iam put-role-policy \
+  --role-name $ROLE_NAME \
+  --policy-name CodeConnectionsAccess \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [
+      {
+        \"Effect\": \"Allow\",
+        \"Action\": [
+          \"codeconnections:UseConnection\",
+          \"codeconnections:GetConnection\"
+        ],
+        \"Resource\": \"$CONNECTION_ARN\"
+      }
+    ]
+  }"
+
+echo "✓ Permission added!"
+
+# ════════════════════════════════════════════════════════════════════════════
+# RETRY PIPELINE
+# ════════════════════════════════════════════════════════════════════════════
+echo "Restarting pipeline..."
+aws codepipeline start-pipeline-execution --name $PIPELINE_NAME
+
+echo "✓ Pipeline restarted!"
+echo ""
+echo "Monitor status with:"
+echo "aws codepipeline get-pipeline-state --name $PIPELINE_NAME --query \"stageStates[*].[stageName,latestExecution.status]\" --output table"
+
+# List all policies on the role
+echo "=== Inline Policies ==="
+aws iam list-role-policies --role-name $ROLE_NAME
+
+echo ""
+echo "=== CodeConnections Policy Content ==="
+aws iam get-role-policy \
+  --role-name $ROLE_NAME \
+  --policy-name CodeConnectionsAccess \
+  --query "PolicyDocument" \
+  --output json
