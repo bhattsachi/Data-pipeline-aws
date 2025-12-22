@@ -119,3 +119,670 @@ The solution must deploy successfully resources mentioned above in a same AWS ac
 ## ARN Connection
 
 
+![alt text](image.png)
+
+## Response body
+{
+  "status": "healthy",
+  "message": "Service is running",
+  "timestamp": "2024-01-15T10:30:45.123456+00:00",
+  "environment": "dev",
+  "application": "serverless-app",
+  "request_id": "abc123-def456",
+  "secret_config": {
+    "app_name": "serverless-app",
+    "environment": "dev",
+    "api_key_present": true    // ← Boolean, NOT the actual key!
+  }
+}
+
+## Complete Flow Diagram
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         LAMBDA EXECUTION FLOW                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+     CLIENT                    API GATEWAY                    LAMBDA
+        │                          │                            │
+        │  POST /health            │                            │
+        │─────────────────────────>│                            │
+        │                          │                            │
+        │                          │  Invoke Lambda             │
+        │                          │  event = {                 │
+        │                          │    "httpMethod": "POST",   │
+        │                          │    "path": "/health",      │
+        │                          │    ...                     │
+        │                          │  }                         │
+        │                          │───────────────────────────>│
+        │                          │                            │
+        │                          │              ┌─────────────┴─────────────┐
+        │                          │              │  lambda_handler(event,    │
+        │                          │              │                context)   │
+        │                          │              │                           │
+        │                          │              │  1. Log event             │
+        │                          │              │  2. Extract path, method  │
+        │                          │              │  3. Call get_secret()     │
+        │                          │              │     └─> Secrets Manager   │
+        │                          │              │  4. Build response_body   │
+        │                          │              │  5. Return response       │
+        │                          │              └─────────────┬─────────────┘
+        │                          │                            │
+        │                          │  Response:                 │
+        │                          │  {                         │
+        │                          │    "statusCode": 200,      │
+        │                          │    "body": "{...}"         │
+        │                          │  }                         │
+        │                          │<───────────────────────────│
+        │                          │                            │
+        │  HTTP 200 OK             │                            │
+        │  {"status": "healthy"}   │                            │
+        │<─────────────────────────│                            │
+        │                          │                            │
+
+```
+
+### SAM Transform
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Transform: AWS::Serverless-2016-10-31                                       │
+│                                                                             │
+│  This is the MAGIC that makes SAM work!                                     │
+│                                                                             │
+│  What it does:                                                              │
+│  1. Tells CloudFormation to use the SAM preprocessor                        │
+│  2. Enables simplified resource types like:                                 │
+│     - AWS::Serverless::Function (instead of AWS::Lambda::Function)         │
+│     - AWS::Serverless::Api (instead of AWS::ApiGateway::RestApi)           │
+│                                                                             │
+│  Behind the scenes, SAM Transform converts:                                 │
+│                                                                             │
+│  AWS::Serverless::Function  ──────►  AWS::Lambda::Function                  │
+│                                      AWS::Lambda::Permission                │
+│                                      AWS::IAM::Role (if not provided)      │
+│                                                                             │
+│  AWS::Serverless::Api       ──────►  AWS::ApiGateway::RestApi              │
+│                                      AWS::ApiGateway::Stage                │
+│                                      AWS::ApiGateway::Deployment           │
+│                                      + many more resources                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Parameters are INPUT VARIABLES for your template                           │
+│                                                                             │
+│  They allow you to:                                                         │
+│  1. Reuse the same template for different environments                      │
+│  2. Customize deployments without changing the template                     │
+│  3. Pass values at deploy time                                              │
+│                                                                             │
+│  Usage when deploying:                                                      │
+│  aws cloudformation deploy \                                                │
+│    --parameter-overrides \                                                  │
+│      EnvironmentName=prod \        ← Overrides default "dev"               │
+│      ApplicationName=my-app \      ← Overrides default "serverless-app"    │
+│      LogRetentionDays=30           ← Overrides default 14                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Environment Variables = Configuration passed to Lambda                     │
+│                                                                             │
+│  These become available in your Python code via os.environ:                │
+│                                                                             │
+│  YAML:                              Python:                                 │
+│  SECRET_ARN: !Ref ApplicationSecret │ os.environ.get("SECRET_ARN")         │
+│                                     │ → "arn:aws:secretsmanager:..."       │
+│                                     │                                       │
+│  SECRET_NAME: !Sub ...              │ os.environ.get("SECRET_NAME")        │
+│                                     │ → "serverless-app/dev/app-secret"    │
+│                                     │                                       │
+│  ENVIRONMENT: !Ref EnvironmentName  │ os.environ.get("ENVIRONMENT")        │
+│                                     │ → "dev"                              │
+│                                     │                                       │
+│  APPLICATION_NAME: !Ref ...         │ os.environ.get("APPLICATION_NAME")   │
+│                                     │ → "serverless-app"                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+## why use Environment Variables?**
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ✓ DO: Use environment variables                                            │
+│    - Configuration is separate from code                                    │
+│    - Same code works in dev/staging/prod                                   │
+│    - Easy to change without redeploying code                               │
+│                                                                             │
+│  ✗ DON'T: Hard-code values in Python                                       │
+│    # Bad!                                                                   │
+│    SECRET_NAME = "serverless-app/dev/app-secret"  ← Hard-coded            │
+│                                                                             │
+│    # Good!                                                                  │
+│    SECRET_NAME = os.environ.get("SECRET_NAME")    ← From environment       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+### Events (API Gateway Triggers) Explained
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Events define WHAT TRIGGERS the Lambda function                            │
+│                                                                             │
+│  This creates 3 triggers:                                                   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Event Name    │  Method  │  Path    │  Full URL                    │   │
+│  ├────────────────┼──────────┼──────────┼──────────────────────────────┤   │
+│  │  HealthPost    │  POST    │  /health │  POST https://xxx.../health  │   │
+│  │  HealthGet     │  GET     │  /health │  GET  https://xxx.../health  │   │
+│  │  TestPost      │  POST    │  /test   │  POST https://xxx.../test    │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  RestApiId: !Ref ApiGateway                                                │
+│  └── Links these events to our API Gateway resource                        │
+│                                                                             │
+│  Behind the scenes, SAM creates:                                           │
+│  1. API Gateway Method for each event                                      │
+│  2. API Gateway Integration (Lambda proxy)                                 │
+│  3. Lambda Permission (allows API Gateway to invoke Lambda)                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Request Flow:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│   Client                API Gateway              Lambda                     │
+│     │                       │                      │                        │
+│     │  POST /health         │                      │                        │
+│     │──────────────────────►│                      │                        │
+│     │                       │  Invoke              │                        │
+│     │                       │─────────────────────►│                        │
+│     │                       │                      │  lambda_handler()      │
+│     │                       │                      │  path == "/health"     │
+│     │                       │                      │  method == "POST"      │
+│     │                       │◄─────────────────────│                        │
+│     │  200 OK               │  Response            │                        │
+│     │◄──────────────────────│                      │                        │
+│     │                       │                      │                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  !Sub performs multiple substitutions:                                       │
+│                                                                             │
+│  ${ApiGateway}     → API Gateway ID (e.g., "abc123xyz")                    │
+│  ${AWS::Region}    → Current region (e.g., "us-east-1")                    │
+│  ${EnvironmentName}→ Parameter value (e.g., "dev")                         │
+│                                                                             │
+│  Result:                                                                    │
+│  https://abc123xyz.execute-api.us-east-1.amazonaws.com/dev                 │
+│          ↑                     ↑                       ↑                   │
+│          │                     │                       └── Stage           │
+│          │                     └── Region                                   │
+│          └── API Gateway ID                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Intrinsic Functions Summary
+
+| Function | Syntax | Purpose | Example |
+|----------|--------|---------|---------|
+| `!Ref` | `!Ref ResourceName` | Get resource ID/name or parameter value | `!Ref EnvironmentName` → `"dev"` |
+| `!Sub` | `!Sub ${Variable}` | String substitution | `!Sub ${AppName}-api` → `"myapp-api"` |
+| `!GetAtt` | `!GetAtt Resource.Attribute` | Get resource attribute | `!GetAtt Role.Arn` → `"arn:aws:iam::..."` |
+| `!Join` | `!Join [delimiter, [values]]` | Join strings | `!Join ["-", ["a", "b"]]` → `"a-b"` |
+| `!If` | `!If [condition, true, false]` | Conditional value | `!If [IsProd, "large", "small"]` |
+
+---
+
+## Complete Resource Diagram
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         RESOURCES CREATED                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│   ┌────────────────────┐                                                   │
+│   │  ApplicationSecret │  AWS::SecretsManager::Secret                      │
+│   │                    │  serverless-app/dev/app-secret                    │
+│   └─────────┬──────────┘                                                   │
+│             │                                                               │
+│             │ !Ref (provides ARN)                                          │
+│             ▼                                                               │
+│   ┌────────────────────┐      ┌─────────────────────┐                      │
+│   │ LambdaExecutionRole│      │ HealthCheckLogGroup │                      │
+│   │                    │      │                     │                      │
+│   │  IAM Role with:    │      │  CloudWatch Logs    │                      │
+│   │  - CloudWatch Logs │      │  14 day retention   │                      │
+│   │  - Secrets Manager │      │                     │                      │
+│   └─────────┬──────────┘      └──────────┬──────────┘                      │
+│             │                            │                                  │
+│             │ !GetAtt Arn                │ LogGroupName references          │
+│             ▼                            ▼                                  │
+│   ┌─────────────────────────────────────────────────┐                      │
+│   │           HealthCheckFunction                    │                      │
+│   │                                                  │                      │
+│   │  AWS::Serverless::Function                      │                      │
+│   │  - Handler: app.lambda_handler                  │                      │
+│   │  - Runtime: python3.12                          │                      │
+│   │  - Environment variables                        │                      │
+│   └─────────────────────┬───────────────────────────┘                      │
+│                         │                                                   │
+│                         │ Events                                            │
+│                         ▼                                                   │
+│   ┌─────────────────────────────────────────────────┐                      │
+│   │              ApiGateway                          │                      │
+│   │                                                  │                      │
+│   │  AWS::Serverless::Api                           │                      │
+│   │  - Stage: dev                                   │                      │
+│   │  - Endpoints:                                   │                      │
+│   │    POST /health                                 │                      │
+│   │    GET  /health                                 │                      │
+│   │    POST /test                                   │                      │
+│   └─────────────────────────────────────────────────┘                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Quick Reference Card
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SERVERLESS-APP-TEMPLATE.YAML QUICK REFERENCE                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Parameters (inputs):                                                       │
+│  - EnvironmentName: dev/staging/prod                                       │
+│  - ApplicationName: app name for resource naming                           │
+│  - LogRetentionDays: CloudWatch log retention                              │
+│                                                                             │
+│  Resources created:                                                         │
+│  1. ApplicationSecret    - Secrets Manager with auto-generated API key     │
+│  2. LambdaExecutionRole  - IAM role with least privilege                   │
+│  3. HealthCheckFunction  - Lambda function (Python 3.12)                   │
+│  4. HealthCheckLogGroup  - CloudWatch Logs with retention                  │
+│  5. ApiGateway           - REST API with /health and /test endpoints       │
+│                                                                             │
+│  Outputs:                                                                   │
+│  - ApiEndpoint          - Base API URL                                     │
+│  - HealthEndpoint       - Full health check URL                            │
+│  - LambdaFunctionName   - Lambda function name                             │
+│  - SecretArn            - Secrets Manager ARN                              │
+│                                                                             │
+│  Deploy command:                                                            │
+│  sam deploy --parameter-overrides EnvironmentName=prod                     │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+## Pipeline Flow
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ArtifactBucket = Storage for pipeline artifacts                            │
+│                                                                             │
+│  This bucket stores:                                                        │
+│  1. Source code zip from GitHub                                            │
+│  2. Build outputs (packaged SAM template)                                  │
+│  3. Deployment artifacts                                                   │
+│                                                                             │
+│  Pipeline Flow:                                                             │
+│  ┌────────┐    ┌─────────────────┐    ┌────────┐    ┌────────────────┐    │
+│  │ GitHub │───►│ ArtifactBucket  │───►│ Build  │───►│ ArtifactBucket │    │
+│  │        │    │ (source.zip)    │    │        │    │ (packaged.yaml)│    │
+│  └────────┘    └─────────────────┘    └────────┘    └────────────────┘    │
+│                                                           │                │
+│                                                           ▼                │
+│                                                      ┌────────┐           │
+│                                                      │ Deploy │           │
+│                                                      └────────┘           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+### CodeBuild Project Explained
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CodeBuild Project = The BUILD stage definition                             │
+│                                                                             │
+│  This defines:                                                              │
+│  1. WHAT to build (Source)                                                 │
+│  2. WHERE to build (Environment)                                           │
+│  3. HOW to build (BuildSpec)                                               │
+│  4. WHERE to put results (Artifacts)                                       │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    CodeBuild Execution                               │   │
+│  │                                                                     │   │
+│  │   1. Spin up container (Environment)                               │   │
+│  │      └── amazon linux 2, small compute                             │   │
+│  │                                                                     │   │
+│  │   2. Download source (from pipeline)                               │   │
+│  │      └── source code from S3 artifact bucket                       │   │
+│  │                                                                     │   │
+│  │   3. Run buildspec.yml commands                                    │   │
+│  │      └── install SAM, validate, package                           │   │
+│  │                                                                     │   │
+│  │   4. Upload artifacts (to pipeline)                                │   │
+│  │      └── packaged-template.yaml, config.json                      │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+### Pipeline Explained
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CodePipeline = The orchestrator of your CI/CD workflow                     │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                          PIPELINE FLOW                                 │ │
+│  │                                                                       │ │
+│  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐│ │
+│  │  │    SOURCE    │───►│    BUILD     │───►│         DEPLOY           ││ │
+│  │  │              │    │              │    │                          ││ │
+│  │  │ GitHubSource │    │  SAMPackage  │    │ CreateChangeSet          ││ │
+│  │  │              │    │              │    │       │                  ││ │
+│  │  │ (pulls code) │    │ (runs        │    │       ▼                  ││ │
+│  │  │              │    │  buildspec)  │    │ ExecuteChangeSet         ││ │
+│  │  └──────────────┘    └──────────────┘    └──────────────────────────┘│ │
+│  │        │                    │                       │                 │ │
+│  │        ▼                    ▼                       ▼                 │ │
+│  │  SourceOutput         BuildOutput            Stack Updated            │ │
+│  │  (code.zip)           (packaged.yaml)        (resources created)     │ │
+│  │                                                                       │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Outputs:
+  PipelineUrl:
+    Description: URL to the CodePipeline in AWS Console
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${Pipeline}/view
+
+  ArtifactBucket:
+    Description: S3 bucket for pipeline artifacts
+    Value: !Ref ArtifactBucket
+```
+
+### Outputs Explained
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Outputs = Values shown after deployment                                    │
+│                                                                             │
+│  PipelineUrl:                                                               │
+│  !Sub https://${AWS::Region}.console.aws.amazon.com/codesuite/             │
+│       codepipeline/pipelines/${Pipeline}/view                              │
+│                                                                             │
+│  Substitutions:                                                             │
+│  ${AWS::Region} → "us-east-1"                                              │
+│  ${Pipeline}    → "serverless-app-pipeline-dev" (the pipeline resource)   │
+│                                                                             │
+│  Result: https://us-east-1.console.aws.amazon.com/codesuite/               │
+│          codepipeline/pipelines/serverless-app-pipeline-dev/view           │
+│                                                                             │
+│  You can click this URL to go directly to your pipeline!                   │
+│                                                                             │
+│  View outputs via CLI:                                                      │
+│  aws cloudformation describe-stacks --stack-name my-stack \                │
+│    --query "Stacks[0].Outputs"                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Complete Pipeline Flow Diagram
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        COMPLETE PIPELINE FLOW                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│   GITHUB                                                                    │
+│   ┌─────────────────────┐                                                  │
+│   │  Repository         │                                                  │
+│   │  - serverless-app-  │                                                  │
+│   │    template.yaml    │                                                  │
+│   │  - lambda/app.py    │                                                  │
+│   │  - buildspec.yml    │                                                  │
+│   └──────────┬──────────┘                                                  │
+│              │                                                              │
+│              │ CodeConnection                                               │
+│              ▼                                                              │
+│   ┌──────────────────────────────────────────────────────────────────────┐ │
+│   │                         CODEPIPELINE                                  │ │
+│   │                                                                      │ │
+│   │  ┌────────────────┐   ┌────────────────┐   ┌────────────────────┐  │ │
+│   │  │  SOURCE STAGE  │   │  BUILD STAGE   │   │   DEPLOY STAGE     │  │ │
+│   │  │                │   │                │   │                    │  │ │
+│   │  │ GitHubSource   │──►│  SAMPackage    │──►│ CreateChangeSet    │  │ │
+│   │  │                │   │                │   │       │            │  │ │
+│   │  │ Pull code      │   │ Run buildspec  │   │       ▼            │  │ │
+│   │  │ from branch    │   │ - sam validate │   │ ExecuteChangeSet   │  │ │
+│   │  │                │   │ - sam package  │   │                    │  │ │
+│   │  └───────┬────────┘   └───────┬────────┘   └─────────┬──────────┘  │ │
+│   │          │                    │                      │              │ │
+│   │          ▼                    ▼                      ▼              │ │
+│   │    SourceOutput          BuildOutput           CloudFormation       │ │
+│   │    (code.zip)            (packaged.yaml)       Stack Created        │ │
+│   │                                                                      │ │
+│   └──────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│                                    │                                        │
+│                                    ▼                                        │
+│   ┌──────────────────────────────────────────────────────────────────────┐ │
+│   │                    DEPLOYED RESOURCES                                 │ │
+│   │                                                                      │ │
+│   │  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────┐ │ │
+│   │  │   API Gateway  │  │    Lambda      │  │   Secrets Manager      │ │ │
+│   │  │                │  │                │  │                        │ │ │
+│   │  │ /health (POST) │──│ app.py         │──│ app-secret             │ │ │
+│   │  │ /test (POST)   │  │ lambda_handler │  │ (auto-generated key)   │ │ │
+│   │  └────────────────┘  └────────────────┘  └────────────────────────┘ │ │
+│   │                                                                      │ │
+│   └──────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## IAM Roles Summary
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           IAM ROLES OVERVIEW                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  PipelineRole                                                        │   │
+│  │  Used by: CodePipeline                                              │   │
+│  │  Permissions:                                                        │   │
+│  │   - codeconnections:UseConnection (GitHub)                          │   │
+│  │   - s3:* (artifact bucket)                                          │   │
+│  │   - codebuild:* (trigger builds)                                    │   │
+│  │   - cloudformation:* (deploy stacks)                                │   │
+│  │   - iam:PassRole (pass CloudFormationRole)                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  CodeBuildRole                                                       │   │
+│  │  Used by: CodeBuild                                                 │   │
+│  │  Permissions:                                                        │   │
+│  │   - logs:* (write build logs)                                       │   │
+│  │   - s3:* (read source, write artifacts)                             │   │
+│  │   - cloudformation:ValidateTemplate                                 │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  CloudFormationRole                                                  │   │
+│  │  Used by: CloudFormation (during deploy)                            │   │
+│  │  Permissions:                                                        │   │
+│  │   - AdministratorAccess (creates Lambda, API GW, Secrets, IAM)     │   │
+│  │   ⚠️  Use least privilege in production!                            │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Quick Reference Card
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PIPELINE.YAML QUICK REFERENCE                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Parameters (6):                                                            │
+│  - CodeConnectionArn    : GitHub connection ARN                            │
+│  - GitHubOwner          : GitHub username/org                              │
+│  - GitHubRepo           : Repository name                                  │
+│  - GitHubBranch         : Branch to monitor (default: main)               │
+│  - ApplicationName      : App name (default: serverless-app)              │
+│  - EnvironmentName      : Environment (dev/staging/prod)                  │
+│                                                                             │
+│  Resources (6):                                                             │
+│  1. ArtifactBucket      : S3 bucket for pipeline artifacts                │
+│  2. PipelineRole        : IAM role for CodePipeline                       │
+│  3. CodeBuildRole       : IAM role for CodeBuild                          │
+│  4. CloudFormationRole  : IAM role for CloudFormation deploy              │
+│  5. CodeBuildProject    : Build project configuration                     │
+│  6. Pipeline            : CodePipeline with 3 stages                      │
+│                                                                             │
+│  Pipeline Stages (3):                                                       │
+│  1. Source  → Pull code from GitHub via CodeConnection                    │
+│  2. Build   → Run buildspec.yml (sam package)                             │
+│  3. Deploy  → CreateChangeSet + ExecuteChangeSet                          │
+│                                                                             │
+│  Outputs (2):                                                               │
+│  - PipelineUrl     : Direct link to pipeline in console                   │
+│  - ArtifactBucket  : Name of the S3 artifact bucket                       │
+│                                                                             │
+│  Deploy command:                                                            │
+│  aws cloudformation deploy \                                               │
+│    --template-file pipeline.yaml \                                         │
+│    --stack-name my-pipeline \                                              │
+│    --parameter-overrides \                                                 │
+│      CodeConnectionArn="arn:aws:codeconnections:..." \                    │
+│      GitHubOwner="myuser" \                                                │
+│      GitHubRepo="myrepo" \                                                 │
+│    --capabilities CAPABILITY_NAMED_IAM                                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+discard-paths: yes
+```
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  discard-paths: yes                                                         │
+│                                                                             │
+│  Controls whether directory structure is preserved in artifact.            │
+│                                                                             │
+│  discard-paths: yes (flatten):                                             │
+│  ┌────────────────────────────┐    ┌────────────────────────────┐         │
+│  │  Build Directory:          │    │  Artifact ZIP:             │         │
+│  │  /codebuild/output/        │    │                            │         │
+│  │  ├── src/                  │ ──►│  packaged-template.yaml   │         │
+│  │  │   └── packaged.yaml     │    │  config.json              │         │
+│  │  └── config/               │    │                            │         │
+│  │      └── config.json       │    │  (flat structure)         │         │
+│  └────────────────────────────┘    └────────────────────────────┘         │
+│                                                                             │
+│  discard-paths: no (preserve):                                             │
+│  ┌────────────────────────────┐    ┌────────────────────────────┐         │
+│  │  Build Directory:          │    │  Artifact ZIP:             │         │
+│  │  /codebuild/output/        │    │  src/                      │         │
+│  │  ├── src/                  │ ──►│  └── packaged.yaml        │         │
+│  │  │   └── packaged.yaml     │    │  config/                   │         │
+│  │  └── config/               │    │  └── config.json          │         │
+│  │      └── config.json       │    │                            │         │
+│  └────────────────────────────┘    └────────────────────────────┘         │
+│                                                                             │
+│  Why use discard-paths: yes?                                               │
+│  - Simpler to reference in deploy stage                                   │
+│  - TemplatePath: BuildOutput::packaged-template.yaml (not full path)     │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Complete Build Flow Diagram. (buidlspec.yml)
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        COMPLETE BUILD FLOW                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  INSTALL PHASE                                                       │   │
+│  │                                                                     │   │
+│  │  1. Set Python 3.12 as runtime                                     │   │
+│  │  2. Upgrade pip                                                     │   │
+│  │  3. Install AWS SAM CLI                                            │   │
+│  │  4. Verify SAM version                                             │   │
+│  │                                                                     │   │
+│  │  Duration: ~30-60 seconds                                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  PRE_BUILD PHASE                                                     │   │
+│  │                                                                     │   │
+│  │  1. Validate SAM template (sam validate --lint)                    │   │
+│  │  2. Validate CloudFormation syntax (aws cloudformation validate)   │   │
+│  │                                                                     │   │
+│  │  If validation fails → BUILD STOPS                                 │   │
+│  │                                                                     │   │
+│  │  Duration: ~5-10 seconds                                           │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  BUILD PHASE                                                         │   │
+│  │                                                                     │   │
+│  │  1. Run sam package                                                 │   │
+│  │     - Zip lambda/ directory                                        │   │
+│  │     - Upload ZIP to S3 bucket                                      │   │
+│  │     - Create packaged-template.yaml                                │   │
+│  │                                                                     │   │
+│  │  2. Create config.json                                             │   │
+│  │     - Parameter values                                             │   │
+│  │     - Tags                                                          │   │
+│  │                                                                     │   │
+│  │  Duration: ~20-40 seconds                                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  POST_BUILD PHASE                                                    │   │
+│  │                                                                     │   │
+│  │  1. Print completion message                                       │   │
+│  │  2. List files (verify artifacts exist)                           │   │
+│  │                                                                     │   │
+│  │  Duration: ~1-2 seconds                                            │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  ARTIFACTS                                                           │   │
+│  │                                                                     │   │
+│  │  Files collected:                                                   │   │
+│  │  ┌─────────────────────────┐                                       │   │
+│  │  │ packaged-template.yaml  │ → SAM template with S3 refs          │   │
+│  │  │ config.json             │ → Parameters and tags                │   │
+│  │  └─────────────────────────┘                                       │   │
+│  │                              │                                      │   │
+│  │                              ▼                                      │   │
+│  │                         ZIP & Upload                                │   │
+│  │                              │                                      │   │
+│  │                              ▼                                      │   │
+│  │                    S3: BuildOutput artifact                        │   │
+│  │                              │                                      │   │
+│  │                              ▼                                      │   │
+│  │                       Deploy Stage                                  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  TOTAL DURATION: ~1-2 minutes                                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
