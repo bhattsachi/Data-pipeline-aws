@@ -798,16 +798,16 @@ aws codeconnections list-connections \
 
 # Verify connection status (must be AVAILABLE)
 aws codeconnections get-connection \
-  --connection-arn "arn:aws:codeconnections:us-east-1:123456789012:connection/your-connection-id" \
+  --connection-arn "arn:aws:codeconnections:us-east-2:615299756109:connection/bf8dce57-c582-4d4c-bf1d-3af007372199" \
   --query "Connection.ConnectionStatus" \
   --output text
 
 # Set your values (UPDATE THESE!)
-export AWS_REGION="us-east-1"
-export CONNECTION_ARN="arn:aws:codeconnections:us-east-1:123456789012:connection/your-connection-id"
-export GITHUB_OWNER="your-github-username"
-export GITHUB_REPO="your-repo-name"
-export GITHUB_BRANCH="main"
+export AWS_REGION="us-east-2"
+export CONNECTION_ARN="arn:aws:codeconnections:us-east-2:615299756109:connection/bf8dce57-c582-4d4c-bf1d-3af007372199"
+export GITHUB_OWNER="bhattsachi"
+export GITHUB_REPO="Data-pipeline-aws"
+export GITHUB_BRANCH="Dev-pipeline"
 export APP_NAME="serverless-app"
 export ENV_NAME="dev"
 
@@ -819,7 +819,7 @@ echo "App: $APP_NAME-$ENV_NAME"
 
 # Deploy the pipeline
 aws cloudformation deploy \
-  --template-file cloudformation/pipeline.yaml \
+  --template-file cloudformation/pipeline.yml \
   --stack-name ${APP_NAME}-pipeline-${ENV_NAME} \
   --parameter-overrides \
     CodeConnectionArn="$CONNECTION_ARN" \
