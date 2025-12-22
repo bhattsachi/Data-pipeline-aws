@@ -40,7 +40,11 @@ phases:
 
   post_build:
     commands:
-      - echo "Build completed"
+      - if [ "$CODEBUILD_BUILD_SUCCEEDING" = "1" ]; then 
+          echo "Build completed"
+        else 
+          echo "Build failed"; 
+        fi  
       - ls -la
 
 artifacts:
