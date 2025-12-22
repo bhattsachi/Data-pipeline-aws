@@ -855,3 +855,123 @@ PIPELINE_NAME=$(aws cloudformation describe-stacks \
   --region $AWS_REGION)
 
 echo "Pipeline Name: $PIPELINE_NAME"
+
+# Manually start pipeline execution
+aws codepipeline start-pipeline-execution \
+  --name ${APP_NAME}-pipeline-${ENV_NAME} \
+  --region $AWS_REGION
+
+echo "Pipeline execution started!"
+
+# Check pipeline status
+aws codepipeline get-pipeline-state \
+  --name ${APP_NAME}-pipeline-${ENV_NAME} \
+  --query "stageStates[*].{Stage:stageName,Status:latestExecution.status}" \
+  --output table \
+  --region $AWS_REGION
+
+# Watch pipeline progress (run multiple times)
+watch -n 10 "aws codepipeline get-pipeline-state \
+  --name ${APP_NAME}-pipeline-${ENV_NAME} \
+  --query 'stageStates[*].{Stage:stageName,Status:latestExecution.status}' \
+  --output table"
+```
+
+**Expected Output (In Progress):**
+```
+---------------------------
+|    GetPipelineState     |
++----------+--------------+
+|  Stage   |   Status     |
++----------+--------------+
+|  Source  |  Succeeded   |
+|  Build   |  InProgress  |
+|  Deploy  |  None        |
++----------+--------------+
+```
+
+**Expected Output (Complete):**
+```
+---------------------------
+|    GetPipelineState     |
++----------+--------------+
+|  Stage   |   Status     |
++----------+--------------+
+|  Source  |  Succeeded   |
+|  Build   |  Succeeded   |
+|  Deploy  |  Succeeded   |
++----------+--------------+
+
+# Wait for application stack to be created
+aws cloudformation wait stack-create-complete \
+  --stack-name ${APP_NAME}-${ENV_NAME} \
+  --region $AWS_REGION
+
+# Get API endpoints
+API_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name ${APP_NAME}-${ENV_NAME} \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+  --output text \
+  --region $AWS_REGION)
+
+HEALTH_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name ${APP_NAME}-${ENV_NAME} \
+  --query "Stacks[0].Outputs[?OutputKey=='HealthEndpoint'].OutputValue" \
+  --output text \
+  --region $AWS_REGION)
+
+echo ""
+echo "=========================================="
+echo "  API ENDPOINTS"
+echo "=========================================="
+echo "Base URL:    $API_ENDPOINT"
+echo "Health:      $HEALTH_ENDPOINT"
+echo "Test:        ${API_ENDPOINT}/test"
+echo "=========================================="
+
+# POST request to /health
+curl -X POST "$HEALTH_ENDPOINT" \
+  -H "Content-Type: application/json" \
+  | jq .
+
+# Expected Response:
+# {
+#   "status": "healthy",
+#   "message": "Service is running",
+#   "timestamp": "2024-01-15T10:30:45.123456+00:00",
+#   "environment": "dev",
+#   "application": "serverless-app",
+#   "request_id": "abc123-def456",
+#   "secret_config": {
+#     "app_name": "serverless-app",
+#     "environment": "dev",
+#     "api_key_present": true
+#   }
+# }
+
+# POST request to /test with JSON body
+curl -X POST "${API_ENDPOINT}/test" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Hello World",
+    "user": "John Doe",
+    "test": true
+  }' | jq .
+
+# Expected Response:
+# {
+#   "status": "success",
+#   "message": "Test endpoint working",
+#   "timestamp": "2024-01-15T10:30:45.123456+00:00",
+#   "environment": "dev",
+#   "echo": {
+#     "method": "POST",
+#     "path": "/test",
+#     "body": {
+#       "message": "Hello World",
+#       "user": "John Doe",
+#       "test": true
+#     }
+#   },
+#   "secret_verified": true
+# }
