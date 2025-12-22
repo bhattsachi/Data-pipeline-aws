@@ -786,3 +786,72 @@ discard-paths: yes
 │  TOTAL DURATION: ~1-2 minutes                                              │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+# List all CodeConnections
+aws codeconnections list-connections --output table
+
+# Or get specific connection ARN by name
+aws codeconnections list-connections \
+  --query "Connections[?ConnectionName=='your-connection-name'].ConnectionArn" \
+  --output text
+
+# Verify connection status (must be AVAILABLE)
+aws codeconnections get-connection \
+  --connection-arn "arn:aws:codeconnections:us-east-1:123456789012:connection/your-connection-id" \
+  --query "Connection.ConnectionStatus" \
+  --output text
+
+# Set your values (UPDATE THESE!)
+export AWS_REGION="us-east-1"
+export CONNECTION_ARN="arn:aws:codeconnections:us-east-1:123456789012:connection/your-connection-id"
+export GITHUB_OWNER="your-github-username"
+export GITHUB_REPO="your-repo-name"
+export GITHUB_BRANCH="main"
+export APP_NAME="serverless-app"
+export ENV_NAME="dev"
+
+# Verify variables are set
+echo "Region: $AWS_REGION"
+echo "Connection: $CONNECTION_ARN"
+echo "GitHub: $GITHUB_OWNER/$GITHUB_REPO ($GITHUB_BRANCH)"
+echo "App: $APP_NAME-$ENV_NAME"
+
+# Deploy the pipeline
+aws cloudformation deploy \
+  --template-file cloudformation/pipeline.yaml \
+  --stack-name ${APP_NAME}-pipeline-${ENV_NAME} \
+  --parameter-overrides \
+    CodeConnectionArn="$CONNECTION_ARN" \
+    GitHubOwner="$GITHUB_OWNER" \
+    GitHubRepo="$GITHUB_REPO" \
+    GitHubBranch="$GITHUB_BRANCH" \
+    ApplicationName="$APP_NAME" \
+    EnvironmentName="$ENV_NAME" \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region $AWS_REGION
+
+# Wait for stack to complete
+aws cloudformation wait stack-create-complete \
+  --stack-name ${APP_NAME}-pipeline-${ENV_NAME} \
+  --region $AWS_REGION
+
+echo "Pipeline stack deployed!"
+
+# Get pipeline URL
+PIPELINE_URL=$(aws cloudformation describe-stacks \
+  --stack-name ${APP_NAME}-pipeline-${ENV_NAME} \
+  --query "Stacks[0].Outputs[?OutputKey=='PipelineUrl'].OutputValue" \
+  --output text \
+  --region $AWS_REGION)
+
+echo "Pipeline URL: $PIPELINE_URL"
+
+# Get pipeline name
+PIPELINE_NAME=$(aws cloudformation describe-stacks \
+  --stack-name ${APP_NAME}-pipeline-${ENV_NAME} \
+  --query "Stacks[0].Outputs[?OutputKey=='PipelineName'].OutputValue" \
+  --output text \
+  --region $AWS_REGION)
+
+echo "Pipeline Name: $PIPELINE_NAME"
