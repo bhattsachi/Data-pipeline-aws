@@ -793,7 +793,7 @@ aws codeconnections list-connections --output table
 
 # Or get specific connection ARN by name
 aws codeconnections list-connections \
-  --query "Connections[?ConnectionName=='your-connection-name'].ConnectionArn" \
+  --query "Connections[?ConnectionName=='GitHub-pipeline'].ConnectionArn" \
   --output text
 
 # Verify connection status (must be AVAILABLE)
