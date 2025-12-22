@@ -989,7 +989,7 @@ aws codepipeline get-pipeline-state \
 # UPDATE THESE VALUES
 # ════════════════════════════════════════════════════════════════════════════
 PIPELINE_NAME="serverless-app-pipeline-dev"
-CONNECTION_ARN="arn:aws:codeconnections:us-east-1:123456789012:connection/your-id"
+CONNECTION_ARN="arn:aws:codeconnections:us-east-2:615299756109:connection/bf8dce57-c582-4d4c-bf1d-3af007372199 "
 
 # ════════════════════════════════════════════════════════════════════════════
 # GET ROLE NAME
