@@ -975,3 +975,10 @@ curl -X POST "${API_ENDPOINT}/test" \
 #   },
 #   "secret_verified": true
 # }
+
+# Get detailed error message
+aws codepipeline get-pipeline-state \
+  --name serverless-app-pipeline-dev \
+  --query "stageStates[?stageName=='Source'].actionStates[0].latestExecution.errorDetails" \
+  --output json
+```
