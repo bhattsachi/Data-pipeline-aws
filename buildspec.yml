@@ -4,7 +4,7 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      python: 3.12
+      python: 3.9
     commands:
       - echo "Installing SAM CLI..."
       - pip install --upgrade pip
@@ -20,7 +20,7 @@ phases:
   build:
     commands:
       - echo "Packaging SAM application..."
-      - sam package --template-file serverless-app-template.yml --output-template-file packaged-template.yaml --s3-bucket ${ARTIFACT_BUCKET} --s3-prefix sam-artifacts/${APPLICATION_NAME}/${ENVIRONMENT_NAME}
+      - sam package --template-file serverless-app-template.yml --output-template-file packaged-template.yml --s3-bucket ${ARTIFACT_BUCKET} --s3-prefix sam-artifacts/${APPLICATION_NAME}/${ENVIRONMENT_NAME}
       - |
         cat > config.json << CONFIGEOF
         {
@@ -46,9 +46,9 @@ phases:
           echo "Build failed"; 
         fi  
       - ls -la
-
+ 
 artifacts:
   files:
-    - packaged-template.yaml
+    - packaged-template.yml
     - config.json
   discard-paths: yes
