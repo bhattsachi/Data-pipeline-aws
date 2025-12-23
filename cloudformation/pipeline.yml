@@ -341,9 +341,9 @@ Resources:
                 Version: '1'
               Configuration:
                 ActionMode: CHANGE_SET_REPLACE
-                StackName: !Sub ${ApplicationName}-${EnvironmentName}
-                ChangeSetName: !Sub ${ApplicationName}-${EnvironmentName}-changeset
-                TemplatePath: BuildOutput::packaged-template.yaml
+                StackName: serverless-app-dev
+                ChangeSetName: serverless-app-dev-changeset
+                TemplatePath: BuildOutput::packaged-template.yml
                 TemplateConfiguration: BuildOutput::config.json
                 Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationRole.Arn
