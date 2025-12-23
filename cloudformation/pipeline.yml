@@ -7,17 +7,24 @@ Parameters:
     Type: String
     Description: ARN of the CodeConnection (must be in AVAILABLE status)
 
+  ConnectionID:
+    Type: String
+    Description: ID of the CodeConnection (must be in AVAILABLE status) 
+    Default: 1f6ccd5f-ab59-4669-8829-216b19d3d570  
+
   GitHubOwner:
     Type: String
     Description: GitHub username or organization name
-
+    Default: bhattsachi
+    
   GitHubRepo:
     Type: String
     Description: GitHub repository name
+    Default: Data-pipeline-aws
 
   GitHubBranch:
     Type: String
-    Default: main
+    Default: Dev-pipeline
     Description: Branch to monitor for changes
 
   ApplicationName:
@@ -74,7 +81,7 @@ Resources:
                 Action:
                   - codeconnections:UseConnection
                   - codeconnections:GetConnection
-                Resource: !Ref CodeConnectionArn
+                Resource: !Sub "arn:aws:codeconnections:${AWS::Region}:${AWS::AccountId}:connection/${ConnectionID}"
               - Sid: S3ArtifactAccess
                 Effect: Allow
                 Action:
@@ -299,10 +306,10 @@ Resources:
                 Provider: CodeStarSourceConnection
                 Version: '1'
               Configuration:
-                ConnectionArn: !Ref CodeConnectionArn
-                FullRepositoryId: !Sub ${GitHubOwner}/${GitHubRepo}
+                ConnectionArn: !Sub "arn:aws:codeconnections:${AWS::Region}:${AWS::AccountId}:connection/${ConnectionID}"
+                FullRepositoryId: !Ref GitHubRepo
                 BranchName: !Ref GitHubBranch
-                OutputArtifactFormat: CODE_ZIP
+                OutputArtifactFormat: "CODE_ZIP"
                 DetectChanges: 'true'
               OutputArtifacts:
                 - Name: SourceOutput

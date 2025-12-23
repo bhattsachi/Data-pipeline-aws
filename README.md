@@ -798,13 +798,13 @@ aws codeconnections list-connections \
 
 # Verify connection status (must be AVAILABLE)
 aws codeconnections get-connection \
-  --connection-arn "arn:aws:codeconnections:us-east-2:615299756109:connection/bf8dce57-c582-4d4c-bf1d-3af007372199" \
+  --connection-arn "arn:aws:codeconnections:us-east-2:615299756109:connection/1f6ccd5f-ab59-4669-8829-216b19d3d570" \
   --query "Connection.ConnectionStatus" \
   --output text
 
 # Set your values (UPDATE THESE!)
 export AWS_REGION="us-east-2"
-export CONNECTION_ARN="arn:aws:codeconnections:us-east-2:615299756109:connection/bf8dce57-c582-4d4c-bf1d-3af007372199"
+export CONNECTION_ARN="arn:aws:codeconnections:us-east-2:615299756109:connection/1f6ccd5f-ab59-4669-8829-216b19d3d570"
 export GITHUB_OWNER="bhattsachi"
 export GITHUB_REPO="Data-pipeline-aws"
 export GITHUB_BRANCH="Dev-pipeline"
@@ -823,7 +823,6 @@ aws cloudformation deploy \
   --stack-name ${APP_NAME}-pipeline-${ENV_NAME} \
   --parameter-overrides \
     CodeConnectionArn="$CONNECTION_ARN" \
-    GitHubOwner="$GITHUB_OWNER" \
     GitHubRepo="$GITHUB_REPO" \
     GitHubBranch="$GITHUB_BRANCH" \
     ApplicationName="$APP_NAME" \
@@ -989,7 +988,7 @@ aws codepipeline get-pipeline-state \
 # UPDATE THESE VALUES
 # ════════════════════════════════════════════════════════════════════════════
 PIPELINE_NAME="serverless-app-pipeline-dev"
-CONNECTION_ARN="arn:aws:codeconnections:us-east-2:615299756109:connection/bf8dce57-c582-4d4c-bf1d-3af007372199 "
+CONNECTION_ARN="arn:aws:codeconnections:us-east-2:615299756109:connection/1f6ccd5f-ab59-4669-8829-216b19d3d570"
 
 # ════════════════════════════════════════════════════════════════════════════
 # GET ROLE NAME
@@ -1005,6 +1004,8 @@ echo "Role: $ROLE_NAME"
 # ════════════════════════════════════════════════════════════════════════════
 # ADD POLICY
 # ════════════════════════════════════════════════════════════════════════════
+CONNECTION_ARN="arn:aws:codeconnections:us-east-2:615299756109:connection/1f6ccd5f-ab59-4669-8829-216b19d3d570"
+
 echo "Adding CodeConnections permission..."
 aws iam put-role-policy \
   --role-name $ROLE_NAME \
@@ -1024,7 +1025,12 @@ aws iam put-role-policy \
   }"
 
 echo "✓ Permission added!"
-
+# ----------------
+# Check existing policy
+# -----------------------
+aws iam get-role-policy \
+ --role-name "$ROLE_NAME" \
+ --policy-name "CodeConnectionsAccess"
 # ════════════════════════════════════════════════════════════════════════════
 # RETRY PIPELINE
 # ════════════════════════════════════════════════════════════════════════════
@@ -1053,7 +1059,7 @@ aws codepipeline start-pipeline-execution \
   --name serverless-app-pipeline-dev
 
 # Watch the status
-watch -n 5 "aws codepipeline get-pipeline-state \
+aws codepipeline get-pipeline-state \
   --name serverless-app-pipeline-dev \
   --query 'stageStates[*].[stageName,latestExecution.status]' \
   --output table"
