@@ -823,6 +823,7 @@ aws cloudformation deploy \
   --stack-name ${APP_NAME}-pipeline-${ENV_NAME} \
   --parameter-overrides \
     CodeConnectionArn="$CONNECTION_ARN" \
+    GitHubOwner="$GITHUB_OWNER" \
     GitHubRepo="$GITHUB_REPO" \
     GitHubBranch="$GITHUB_BRANCH" \
     ApplicationName="$APP_NAME" \
@@ -1129,16 +1130,3 @@ aws codepipeline get-pipeline \
 |  Data-pipeline-aws    |  Dev-pipeline   |   ← Branch name configured
 +-----------------------+-----------------+
 
-
-aws cloudformation deploy \
-  --template-file cloudformation/pipeline.yml \
-  --stack-name serverless-app-pipeline-dev\
-  --parameter-overrides \
-    CodeConnectionArn="arn:aws:codeconnections:us-east-2:615299756109:connection/1f6ccd5f-ab59-4669-8829-216b19d3d570" \
-    GitHubOwner=“bhattsachi” \
-    GitHubRepo="Data-pipeline-aws" \
-    GitHubBranch=“Dev-pipeline” \
-    ApplicationName="serverless-app" \
-    EnvironmentName="dev" \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region us-east-2

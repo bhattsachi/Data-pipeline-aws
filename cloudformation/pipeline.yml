@@ -307,7 +307,7 @@ Resources:
                 Version: '1'
               Configuration:
                 ConnectionArn: !Sub "arn:aws:codeconnections:${AWS::Region}:${AWS::AccountId}:connection/${ConnectionID}"
-                FullRepositoryId: !Ref GitHubRepo
+                FullRepositoryId: !Sub ${GitHubOwner}/${GitHubRepo}
                 BranchName: !Ref GitHubBranch
                 OutputArtifactFormat: "CODE_ZIP"
                 DetectChanges: 'true'
