@@ -1130,3 +1130,17 @@ aws codepipeline get-pipeline \
 |  Data-pipeline-aws    |  Dev-pipeline   |   ← Branch name configured
 +-----------------------+-----------------+
 
+
+
+cd Data-pipeline-aws
+
+# Replace .yaml with .yml in buildspec.yml
+sed -i 's/serverless-app-template\.yaml/serverless-app-template.yml/g' buildspec.yml
+
+# Verify the change
+grep "serverless-app-template" buildspec.yml
+
+# Commit and push
+git add buildspec.yml
+git commit -m "Fix: Use .yml extension for template file"
+git push origin main
