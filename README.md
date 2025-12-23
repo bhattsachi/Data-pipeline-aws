@@ -1144,3 +1144,18 @@ grep "serverless-app-template" buildspec.yml
 git add buildspec.yml
 git commit -m "Fix: Use .yml extension for template file"
 git push origin main
+
+aws cloudformation deploy \
+  --template-file cloudformation/pipeline.yaml \
+  --stack-name serverless-app-pipeline-dev \
+  --parameter-overrides \
+    CodeConnectionArn="arn:aws:codeconnections:us-east-2:615299756109:connection/1f6ccd5f-ab59-4669-8829-216b19d3d570" \
+    GitHubOwner="YOUR_GITHUB_USERNAME" \
+    GitHubRepo="Data-pipeline-aws" \
+    GitHubBranch="main" \
+    ApplicationName="serverless-app" \
+    EnvironmentName="dev" \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-east-2
+
+echo "✓ Pipeline redeployed!"
