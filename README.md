@@ -1085,3 +1085,31 @@ Then:
 |  Build   |  InProgress     |
 |  Deploy  |  None           |
 +----------+-----------------+  
+
+ROLE_NAME="serverless-app-pipeline-role-dev"
+
+# Grant broader codeconnections access (for testing only!)
+aws iam put-role-policy \
+  --role-name "$ROLE_NAME" \
+  --policy-name "CodeConnectionsFullAccess" \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [
+      {
+        \"Effect\": \"Allow\",
+        \"Action\": [
+          \"codeconnections:*\"
+        ],
+        \"Resource\": \"*\"
+      },
+      {
+        \"Effect\": \"Allow\",
+        \"Action\": [
+          \"codestar-connections:*\"
+        ],
+        \"Resource\": \"*\"
+      }
+    ]
+  }"
+
+echo "Broad permissions added. Try pipeline again."
