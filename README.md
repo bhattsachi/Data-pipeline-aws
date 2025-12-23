@@ -1159,3 +1159,99 @@ aws cloudformation deploy \
   --region us-east-2
 
 echo "✓ Pipeline redeployed!"
+
+rise21up#
+
+git clone https://github.com/bhattsachi/Data-pipeline-aws.git
+
+# Usefull commands
+
+# Monitor pipeline
+aws codepipeline get-pipeline-state \
+  --name serverless-app-pipeline-dev \
+  --region us-east-2 \
+  --query "stageStates[*].[stageName,latestExecution.status]" \
+  --output table
+
+# View Lambda logs
+aws logs tail /aws/lambda/serverless-app-dev-health --follow --region us-east-2
+
+# Get all stack outputs
+aws cloudformation describe-stacks \
+  --stack-name serverless-app-dev \
+  --region us-east-2 \
+  --query "Stacks[0].Outputs" \
+  --output table
+
+## Get all URL path
+# Get ALL outputs from your stack
+aws cloudformation describe-stacks \
+  --stack-name serverless-app-dev \
+  --region us-east-2 \
+  --query "Stacks[0].Outputs" \
+  --output table
+
+  ##  Complete Test scripts
+
+
+REGION="us-east-2"
+STACK_NAME="serverless-app-dev"
+
+echo "=== Getting API Information ==="
+
+# Get API endpoint
+API_URL=$(aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --region $REGION \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+  --output text)
+
+HEALTH_URL=$(aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --region $REGION \
+  --query "Stacks[0].Outputs[?OutputKey=='HealthEndpoint'].OutputValue" \
+  --output text)
+
+echo ""
+echo "API Base URL: $API_URL"
+echo "Health URL:   $HEALTH_URL"
+echo ""
+
+echo "=== Testing Health Endpoint (POST) ==="
+echo "URL: $HEALTH_URL"
+echo "Response:"
+curl -s -X POST "$HEALTH_URL" -H "Content-Type: application/json" | jq .
+
+echo ""
+echo "=== Testing Health Endpoint (GET) ==="
+curl -s -X GET "$HEALTH_URL" | jq .
+
+echo ""
+echo "=== Testing Test Endpoint (POST) ==="
+echo "URL: ${API_URL}/test"
+curl -s -X POST "${API_URL}/test" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello!"}' | jq .
+
+## Final API END point Output
+
+API Base URL: https://2vkbu4xudg.execute-api.us-east-2.amazonaws.com/dev
+~ $ echo "URL: ${API_URL}/test"
+URL: https://2vkbu4xudg.execute-api.us-east-2.amazonaws.com/dev/test
+~ $ curl -s -X POST "${API_URL}/test" \
+>   -H "Content-Type: application/json" \
+>   -d '{"message": "Hello!"}' | jq .
+{
+  "status": "success",
+  "message": "Test endpoint working",
+  "timestamp": "2025-12-23T23:51:52.871388+00:00",
+  "environment": "dev",
+  "echo": {
+    "method": "POST",
+    "path": "/test",
+    "body": {
+      "message": "Hello!"
+    }
+  },
+  "secret_verified": true
+}
