@@ -1113,3 +1113,32 @@ aws iam put-role-policy \
   }"
 
 echo "Broad permissions added. Try pipeline again."
+
+aws codepipeline get-pipeline \
+  --name serverless-app-pipeline-dev  \
+  --region us-east-2 \
+  --query "pipeline.stages[?name=='Source'].actions[0].configuration.[FullRepositoryId,BranchName]" \
+  --output table
+```
+
+**Example Output:**
+```
+-------------------------------------------
+|              GetPipeline                |
++-----------------------+-----------------+
+|  Data-pipeline-aws    |  Dev-pipeline   |   ← Branch name configured
++-----------------------+-----------------+
+
+
+aws cloudformation deploy \
+  --template-file cloudformation/pipeline.yml \
+  --stack-name serverless-app-pipeline-dev\
+  --parameter-overrides \
+    CodeConnectionArn="arn:aws:codeconnections:us-east-2:615299756109:connection/1f6ccd5f-ab59-4669-8829-216b19d3d570" \
+    GitHubOwner=“bhattsachi” \
+    GitHubRepo="Data-pipeline-aws" \
+    GitHubBranch=“Dev-pipeline” \
+    ApplicationName="serverless-app" \
+    EnvironmentName="dev" \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-east-2
