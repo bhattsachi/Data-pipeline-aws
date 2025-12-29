@@ -1233,11 +1233,13 @@ curl -s -X POST "${API_URL}/test" \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello!"}' | jq .
 
+
 ## Final API END point Output
 
 API Base URL: https://2vkbu4xudg.execute-api.us-east-2.amazonaws.com/dev
-~ $ echo "URL: ${API_URL}/test"
+echo "URL: ${API_URL}/test"
 URL: https://2vkbu4xudg.execute-api.us-east-2.amazonaws.com/dev/test
+
 ~ $ curl -s -X POST "${API_URL}/test" \
 >   -H "Content-Type: application/json" \
 >   -d '{"message": "Hello!"}' | jq .
@@ -1245,6 +1247,29 @@ URL: https://2vkbu4xudg.execute-api.us-east-2.amazonaws.com/dev/test
   "status": "success",
   "message": "Test endpoint working",
   "timestamp": "2025-12-23T23:51:52.871388+00:00",
+  "environment": "dev",
+  "echo": {
+    "method": "POST",
+    "path": "/test",
+    "body": {
+      "message": "Hello!"
+    }
+  },
+  "secret_verified": true
+}
+
+https://2vkbu4xudg.execute-api.us-east-2.amazonaws.com/dev
+
+## API Gateway Endpoint testing ( getting response back from Lambda)
+  curl -s -X POST "https://2vkbu4xudg.execute-api.us-east-2.amazonaws.com/dev/test" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello!"}' | jq .
+
+## Response from Lambda 
+  {
+  "status": "success",
+  "message": "Test endpoint working",
+  "timestamp": "2025-12-29T22:21:18.740613+00:00",
   "environment": "dev",
   "echo": {
     "method": "POST",
