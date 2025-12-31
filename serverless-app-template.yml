@@ -113,6 +113,181 @@ Resources:
       EndpointConfiguration:
         Type: REGIONAL
 
+# ==========================================================================
+  # GLUE DATA BUCKET
+  # ==========================================================================
+  GlueDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ApplicationName}-glue-data-${AWS::AccountId}-${AWS::Region}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+# ==========================================================================
+  # GLUE JOB
+  # ==========================================================================
+  GlueJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ApplicationName}-glue-role-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt GlueDataBucket.Arn
+                  - !Sub ${GlueDataBucket.Arn}/*
+
+  CsvProcessorGlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub ${ApplicationName}-csv-processor-${EnvironmentName}
+      Description: Glue job to process CSV files
+      Role: !GetAtt GlueJobRole.Arn
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 60
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub s3://${GlueDataBucket}/scripts/csv_processor.py
+        PythonVersion: '3'
+      DefaultArguments:
+        '--job-language': python
+        '--job-bookmark-option': job-bookmark-enable
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--INPUT_PATH': !Sub s3://${GlueDataBucket}/input/
+        '--OUTPUT_PATH': !Sub s3://${GlueDataBucket}/output/
+
+
+  # ==========================================================================
+  # STEP FUNCTIONS
+  # ==========================================================================
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ApplicationName}-stepfn-role-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: GlueAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartJobRun
+                  - glue:GetJobRun
+                  - glue:GetJobRuns
+                  - glue:BatchStopJobRun
+                Resource:
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${ApplicationName}-csv-processor-${EnvironmentName}
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+  StepFunctionsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/stepfunctions/${ApplicationName}-glue-orchestrator-${EnvironmentName}
+      RetentionInDays: !Ref LogRetentionDays
+
+  GlueOrchestratorStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub ${ApplicationName}-glue-orchestrator-${EnvironmentName}
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      LoggingConfiguration:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StepFunctionsLogGroup.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Orchestrate Glue Job",
+          "StartAt": "StartGlueJob",
+          "States": {
+            "StartGlueJob": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${ApplicationName}-csv-processor-${EnvironmentName}",
+                "Arguments": {
+                  "--INPUT_PATH.$": "$.inputPath",
+                  "--OUTPUT_PATH.$": "$.outputPath"
+                }
+              },
+              "ResultPath": "$.glueResult",
+              "Next": "JobSucceeded",
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "JobFailed"
+                }
+              ],
+              "Retry": [
+                {
+                  "ErrorEquals": ["Glue.AWSGlueException"],
+                  "IntervalSeconds": 60,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ]
+            },
+            "JobSucceeded": {
+              "Type": "Pass",
+              "Parameters": {
+                "status": "SUCCEEDED",
+                "message": "Glue job completed successfully",
+                "jobRunId.$": "$.glueResult.JobRunId"
+              },
+              "End": true
+            },
+            "JobFailed": {
+              "Type": "Fail",
+              "Error": "GlueJobFailed",
+              "Cause": "Glue job execution failed"
+            }
+          }
+        }
+
 Outputs:
   ApiEndpoint:
     Description: API Gateway endpoint URL
@@ -129,3 +304,31 @@ Outputs:
   SecretArn:
     Description: Secret ARN
     Value: !Ref ApplicationSecret
+    
+  GlueDataBucketName:
+    Description: S3 bucket for Glue data
+    Value: !Ref GlueDataBucket
+
+  GlueJobName:
+    Description: Glue job name
+    Value: !Ref CsvProcessorGlueJob
+
+  GlueInputPath:
+    Description: S3 input path
+    Value: !Sub s3://${GlueDataBucket}/input/
+
+  GlueOutputPath:
+    Description: S3 output path
+    Value: !Sub s3://${GlueDataBucket}/output/
+
+  StateMachineArn:
+    Description: Step Functions State Machine ARN
+    Value: !Ref GlueOrchestratorStateMachine
+
+  StateMachineName:
+    Description: Step Functions State Machine Name
+    Value: !Sub ${ApplicationName}-glue-orchestrator-${EnvironmentName}
+
+  StepFunctionsRoleArn:
+    Description: Step Functions Role ARN
+    Value: !GetAtt StepFunctionsRole.Arn

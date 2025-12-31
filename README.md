@@ -1416,3 +1416,83 @@ yaml_content = yaml.dump(all_definitions, sort_keys=False)
 s3.put_object(Bucket=bucket_name, Key=yaml_key, Body=yaml_content)
 
 print(f"✅ Updated YAML with {len(all_definitions)} total definitions at s3://{bucket_name}/{yaml_key}")
+## ------------
+## Folder structure
+from step_functions_manager import StepFunctionsManager
+
+manager = StepFunctionsManager(region="us-east-2")
+
+# Create role
+role_arn = manager.create_step_function_role("my-sfn-role")
+
+# Create state machine
+sm_arn = manager.create_glue_job_state_machine(
+    state_machine_name="my-glue-orchestrator",
+    glue_job_name="serverless-app-csv-processor-dev",
+    role_arn=role_arn,
+    input_path="s3://my-bucket/input/",
+    output_path="s3://my-bucket/output/"
+)
+
+# Start execution
+exec_arn = manager.start_execution(
+    state_machine_arn=sm_arn,
+    input_path="s3://my-bucket/input/",
+    output_path="s3://my-bucket/output/"
+)
+
+# Wait for completion
+result = manager.wait_for_completion(exec_arn)
+print(f"Final status: {result['status']}")
+
+## Final Folder Structure
+```
+Data-pipeline-aws/
+├── serverless-app-template.yml    ← SAM template (API + Glue only)
+├── buildspec.yml
+├── dev.json
+│
+├── lambda/
+│   └── api/
+│       └── app.py                 ← API Lambda only
+│
+├── glue/
+│   ├── csv_processor.py           ← Glue script
+│   └── sample_data.csv
+│
+├── scripts/                       ← NEW: Python scripts for Step Functions
+│   ├── step_functions_manager.py  ← Full-featured manager class
+│   ├── run_glue_workflow.py       ← Simple CLI script
+│   └── requirements.txt
+│
+└── cloudformation/
+    └── pipeline.yaml
+```
+
+---
+
+## Summary
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                            │
+│              │
+│  Step Functions created programmatically via Python (Boto3)        │
+│                                                                             │
+│  BENEFITS:                                                                  │
+│  ✓ Dynamic state machine creation                                          │
+│  ✓ Easy to modify workflow logic in Python                                │
+│  ✓ Can create multiple state machines programmatically                    │
+│  ✓ Reusable manager class                                                  │
+│  ✓ No Lambda functions for orchestration                                  │
+│                                                                             │
+│  WORKFLOW:                                                                  │
+│  1. Pipeline deploys API + Glue Job                                        │
+│  2. Python script creates Step Functions state machine                    │
+│  3. Python script starts execution                                         │
+│  4. Step Functions directly invokes Glue job                              │
+│  5. Glue job processes CSV and writes output                              │
+│                                                                             │
+│  COMMAND:                                                                   │
+│  python3 scripts/run_glue_workflow.py --region us-east-2                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
