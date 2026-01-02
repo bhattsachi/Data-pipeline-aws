@@ -1,11 +1,9 @@
-
 """
 Glue ETL Job - CSV Processor
 Reads CSV from S3, transforms, and writes output.
 """
 
 import sys
-import boto3
 from awsglue.transforms import *
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
