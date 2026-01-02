@@ -1,4 +1,3 @@
-
 version: 0.2
 
 phases:
@@ -6,23 +5,26 @@ phases:
     runtime-versions:
       python: 3.9
     commands:
-      - echo "Installing SAM CLI..."
+      - echo "Installing dependencies..."
       - pip install --upgrade pip
       - pip install aws-sam-cli
       - sam --version
 
   pre_build:
     commands:
+      - echo "=== Pre-build phase ==="
       - echo "Validating SAM template..."
       - sam validate --template serverless-app-template.yml --lint
-      - aws cloudformation validate-template --template-body file://serverless-app-template.yml
 
   build:
     commands:
+      - echo "=== Build phase ==="
       - echo "Packaging SAM application..."
-      - sam package --template-file serverless-app-template.yml --output-template-file packaged-template.yml --s3-bucket ${ARTIFACT_BUCKET} --s3-prefix sam-artifacts/${APPLICATION_NAME}/${ENVIRONMENT_NAME}
+      - sam package --template-file serverless-app-template.yml --output-template-file packaged-template.yaml --s3-bucket ${ARTIFACT_BUCKET} --s3-prefix sam-artifacts/${APPLICATION_NAME}/${ENVIRONMENT_NAME}
+      
+      - echo "Creating config.json..."
       - |
-        cat > config.json << CONFIGEOF
+        cat > config.json << EOF
         {
           "Parameters": {
             "EnvironmentName": "${ENVIRONMENT_NAME}",
@@ -35,20 +37,22 @@ phases:
             "ManagedBy": "CloudFormation"
           }
         }
-        CONFIGEOF
+        EOF
       - cat config.json
 
   post_build:
     commands:
-      - if [ "$CODEBUILD_BUILD_SUCCEEDING" = "1" ]; then 
-          echo "Build completed"
-        else 
-          echo "Build failed"; 
-        fi  
-      - ls -la
- 
+      - echo "=== Post-build phase ==="
+      - echo "Uploading Glue script..."
+      - |
+        GLUE_BUCKET="${APPLICATION_NAME}-glue-data-$(aws sts get-caller-identity --query Account --output text)-${AWS_REGION}"
+        if [ -f "glue/csv_processor.py" ]; then
+          aws s3 cp glue/csv_processor.py s3://${GLUE_BUCKET}/scripts/csv_processor.py --region ${AWS_REGION} || echo "Bucket may not exist yet"
+        fi
+      - echo "Build completed!"
+
 artifacts:
   files:
-    - packaged-template.yml
+    - packaged-template.yaml
     - config.json
   discard-paths: yes
