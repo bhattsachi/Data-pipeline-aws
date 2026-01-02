@@ -826,8 +826,8 @@ aws cloudformation deploy \
     GitHubOwner="$GITHUB_OWNER" \
     GitHubRepo="$GITHUB_REPO" \
     GitHubBranch="$GITHUB_BRANCH" \
-    ApplicationName="$APP_NAME" \
-    EnvironmentName="$ENV_NAME" \
+    ApplicationName="serverless-app" \
+    EnvironmentName="dev" \
   --capabilities CAPABILITY_NAMED_IAM \
   --region $AWS_REGION
 
@@ -1146,7 +1146,7 @@ git commit -m "Fix: Use .yml extension for template file"
 git push origin main
 
 aws cloudformation deploy \
-  --template-file cloudformation/pipeline.yaml \
+  --template-file cloudformation/pipeline.yml \
   --stack-name serverless-app-pipeline-dev \
   --parameter-overrides \
     CodeConnectionArn="arn:aws:codeconnections:us-east-2:615299756109:connection/1f6ccd5f-ab59-4669-8829-216b19d3d570" \
@@ -4331,7 +4331,7 @@ echo "✅ Files uploaded!"
 aws s3 ls s3://$GLUE_BUCKET/ --recursive --region us-east-2
 
 Step 6: Get Stack Outputs
-bashaws cloudformation describe-stacks \
+aws cloudformation describe-stacks \
   --stack-name serverless-app-dev \
   --region us-east-2 \
   --query "Stacks[0].Outputs" \
