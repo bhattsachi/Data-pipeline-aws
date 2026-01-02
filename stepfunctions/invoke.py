@@ -8,6 +8,7 @@ from io import BytesIO
 s3 = boto3.client('s3')
 
 # Input and output bucket details
+# Testing with Mani 
 bucket_name = 'dev-batuu-test'
 input_prefix = 'snaplogic-migration/task_output/'
 output_prefix = 'snaplogic-migration/stepfunction_scripts/'
