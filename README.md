@@ -4548,3 +4548,145 @@ The generated Step Function has this workflow:
 │           NotifyFailure ──► SNS                                            │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+
+"StartGlueJob": {
+  ...
+  "ResultPath": "$.glueResult",
+  "Next": "JobSucceeded",        # ← Go here on success
+  "Catch": [
+    {
+      "ErrorEquals": ["States.ALL"],
+      "Next": "JobFailed"        # ← Go here on error
+    }
+  ]
+}
+```
+
+---
+
+## Complete Flow Diagram
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  COMPLETE INVOCATION FLOW                                                   │
+│                                                                             │
+│  ┌─────────────────┐                                                       │
+│  │  Python Script  │                                                       │
+│  │  (Boto3)        │                                                       │
+│  └────────┬────────┘                                                       │
+│           │                                                                 │
+│           │ 1. sfn.start_execution(                                        │
+│           │      stateMachineArn=ARN,                                      │
+│           │      input={"inputPath": "s3://...", "outputPath": "s3://..."} │
+│           │    )                                                           │
+│           ▼                                                                 │
+│  ┌─────────────────┐                                                       │
+│  │ Step Functions  │                                                       │
+│  │ State Machine   │                                                       │
+│  └────────┬────────┘                                                       │
+│           │                                                                 │
+│           │ 2. Execute "StartGlueJob" state                                │
+│           │    Resource: arn:aws:states:::glue:startJobRun.sync           │
+│           │    Parameters:                                                 │
+│           │      JobName: serverless-app-csv-processor-dev                │
+│           │      Arguments:                                                │
+│           │        --INPUT_PATH: $.inputPath                              │
+│           │        --OUTPUT_PATH: $.outputPath                            │
+│           ▼                                                                 │
+│  ┌─────────────────┐                                                       │
+│  │   AWS Glue      │                                                       │
+│  │   Service       │                                                       │
+│  └────────┬────────┘                                                       │
+│           │                                                                 │
+│           │ 3. glue.start_job_run(                                         │
+│           │      JobName='serverless-app-csv-processor-dev',              │
+│           │      Arguments={                                               │
+│           │        '--INPUT_PATH': 's3://bucket/input/',                  │
+│           │        '--OUTPUT_PATH': 's3://bucket/output/'                 │
+│           │      }                                                         │
+│           │    )                                                           │
+│           ▼                                                                 │
+│  ┌─────────────────┐                                                       │
+│  │  Spark Cluster  │                                                       │
+│  │  (G.1X Workers) │                                                       │
+│  └────────┬────────┘                                                       │
+│           │                                                                 │
+│           │ 4. Download script from S3:                                    │
+│           │    s3://bucket/scripts/csv_processor.py                       │
+│           │                                                                 │
+│           │ 5. Run script:                                                 │
+│           │    python csv_processor.py \                                  │
+│           │      --JOB_NAME serverless-app-csv-processor-dev \            │
+│           │      --INPUT_PATH s3://bucket/input/ \                        │
+│           │      --OUTPUT_PATH s3://bucket/output/                        │
+│           ▼                                                                 │
+│  ┌─────────────────┐                                                       │
+│  │csv_processor.py │                                                       │
+│  │                 │                                                       │
+│  │ args = getResolvedOptions(sys.argv,                                    │
+│  │          ['JOB_NAME', 'INPUT_PATH', 'OUTPUT_PATH'])                    │
+│  │                                                                         │
+│  │ # Read from input path                                                 │
+│  │ # Process data                                                         │
+│  │ # Write to output path                                                 │
+│  └────────┬────────┘                                                       │
+│           │                                                                 │
+│           │ 6. Job completes → Returns result to Glue                     │
+│           ▼                                                                 │
+│  ┌─────────────────┐                                                       │
+│  │   AWS Glue      │ ← Job status: SUCCEEDED                              │
+│  └────────┬────────┘                                                       │
+│           │                                                                 │
+│           │ 7. Step Functions receives result (because of .sync)          │
+│           ▼                                                                 │
+│  ┌─────────────────┐                                                       │
+│  │ Step Functions  │                                                       │
+│  │ → JobSucceeded  │                                                       │
+│  └────────┬────────┘                                                       │
+│           │                                                                 │
+│           │ 8. Execution complete                                          │
+│           ▼                                                                 │
+│  ┌─────────────────┐                                                       │
+│  │  Python Script  │ ← Receives final status                              │
+│  │  (waiting)      │                                                       │
+│  └─────────────────┘                                                       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Key Concepts Summary
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  KEY CONCEPTS                                                               │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. SERVICE INTEGRATION                                                     │
+│     "arn:aws:states:::glue:startJobRun.sync"                              │
+│     Step Functions has native integration with Glue - no Lambda needed!   │
+│                                                                             │
+│  2. .sync SUFFIX                                                           │
+│     Makes Step Functions wait for Glue job to complete                    │
+│     Without it, Step Functions would immediately move to next state       │
+│                                                                             │
+│  3. PARAMETER PASSING                                                       │
+│     "--INPUT_PATH.$": "$.inputPath"                                       │
+│     The .$ suffix means "get value from JSON path"                        │
+│                                                                             │
+│  4. getResolvedOptions                                                     │
+│     Glue utility function to parse command-line arguments                 │
+│     Arguments are passed as --KEY value format                            │
+│                                                                             │
+│  5. SCRIPT LOCATION                                                        │
+│     Glue job definition specifies:                                        │
+│     ScriptLocation: s3://bucket/scripts/csv_processor.py                  │
+│     Glue downloads and runs this script                                   │
+│                                                                             │
+│  6. NO LAMBDA REQUIRED                                                     │
+│     Direct integration: Step Functions → Glue                             │
+│     Simpler, cheaper, less code to maintain                               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘

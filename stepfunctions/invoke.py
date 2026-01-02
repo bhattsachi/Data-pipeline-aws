@@ -22,7 +22,6 @@ import argparse
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-
 class StepFunctionInvoker:
     """Invoke and monitor Step Functions executions."""
 
