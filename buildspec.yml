@@ -20,7 +20,7 @@ phases:
     commands:
       - echo "=== Build phase ==="
       - echo "Packaging SAM application..."
-      - sam package --template-file serverless-app-template.yml --output-template-file packaged-template.yaml --s3-bucket ${ARTIFACT_BUCKET} --s3-prefix sam-artifacts/${APPLICATION_NAME}/${ENVIRONMENT_NAME}
+      - sam package --template-file serverless-app-template.yml --output-template-file packaged-template.yml --s3-bucket ${ARTIFACT_BUCKET} --s3-prefix sam-artifacts/${APPLICATION_NAME}/${ENVIRONMENT_NAME}
       
       - echo "Creating config.json..."
       - |
@@ -53,6 +53,6 @@ phases:
 
 artifacts:
   files:
-    - packaged-template.yaml
+    - packaged-template.yml
     - config.json
   discard-paths: yes
