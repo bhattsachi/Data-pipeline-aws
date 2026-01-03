@@ -48,8 +48,7 @@ print(f"Records found: {record_count}")
 if record_count == 0:
     print("No records to process!")
     job.commit()
-    sys.exit(0)
-
+else:
 # Show sample data
 print("\nSample data:")
 datasource.toDF().show(5)
