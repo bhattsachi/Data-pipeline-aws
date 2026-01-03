@@ -49,9 +49,9 @@ if record_count == 0:
     print("No records to process!")
     job.commit()
 else:
-# Show sample data
-print("\nSample data:")
-datasource.toDF().show(5)
+    # Show sample data
+    print("\nSample data:")
+    datasource.toDF().show(5)
 
 # Transform - Add metadata columns
 df = datasource.toDF()
