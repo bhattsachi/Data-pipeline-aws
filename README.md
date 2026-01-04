@@ -4690,3 +4690,21 @@ The generated Step Function has this workflow:
 │     Simpler, cheaper, less code to maintain                               │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+
+## Rerun Step function
+# Using the Python script
+pipenv run python scripts/invoke_step_function.py --run --region us-east-2
+
+# Or using AWS CLI
+STATE_MACHINE_ARN=$(aws cloudformation describe-stacks \
+  --stack-name serverless-app-dev \
+  --region us-east-2 \
+  --query "Stacks[0].Outputs[?OutputKey=='StateMachineArn'].OutputValue" \
+  --output text)
+
+GLUE_BUCKET="serverless-app-glue-data-615299756109-us-east-2"
+
+aws stepfunctions start-execution \
+  --state-machine-arn $STATE_MACHINE_ARN \
+  --input "{\"inputPath\": \"s3://$GLUE_BUCKET/input/\", \"outputPath\": \"s3://$GLUE_BUCKET/output/\"}" \
+  --region us-east-2
