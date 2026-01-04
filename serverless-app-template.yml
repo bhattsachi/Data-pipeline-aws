@@ -276,7 +276,7 @@ Resources:
               "Parameters": {
                 "status": "SUCCEEDED",
                 "message": "Glue job completed successfully",
-                "jobRunId.$": "$.glueResult.JobRunId"
+                "jobRunId.$": "$.glueResult.Id"
               },
               "End": true
             },
