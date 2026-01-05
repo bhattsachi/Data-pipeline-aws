@@ -272,7 +272,7 @@ Resources:
                 {
                   "ErrorEquals": ["States.ALL"],
                   "ResultPath": "$.error",
-                  "Next": "JobFailed"
+                  "Next": "NotifyFailure"
                 }
               ],
               "Retry": [
@@ -292,6 +292,17 @@ Resources:
                 "jobRunId.$": "$.glueResult.Id"
               },
               "End": true
+            },
+            "NotifyFailure": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::sns:publish",
+              "Parameters": {
+                "TopicArn": "${GlueJobFailureTopic}",
+                "Subject": "Glue Job Failed: ${ApplicationName}-csv-processor-${EnvironmentName}",
+                "Message.$": "States.Format('Glue job failed!\n\nJob Name: ${ApplicationName}-csv-processor-${EnvironmentName}\nError: {}\n\nInput Path: {}\nOutput Path: {}', $.error.Cause, $.inputPath, $.outputPath)"
+              },
+              "ResultPath": "$.snsResult",
+              "Next": "JobFailed"
             },
             "JobFailed": {
               "Type": "Fail",

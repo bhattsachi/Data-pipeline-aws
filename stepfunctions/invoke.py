@@ -59,6 +59,7 @@ for csv_key in csv_files:
 
         # Build Step Function definition with failure notification
         # Assumes an SNS topic exists for notifications
+        '''
         sns_topic_arn = "arn:aws:sns:us-east-2:615299756109:serverless-app-glue-job-failure-dev"
         definition = {
             "name": job_name,
@@ -109,7 +110,7 @@ for csv_key in csv_files:
                 }
             }
         }
-
+      
         # Upload individual JSON file
         output_key = f"{output_prefix}{job_name}.json"
         s3.put_object(
@@ -130,3 +131,5 @@ yaml_content = yaml.dump(all_definitions, sort_keys=False)
 s3.put_object(Bucket=bucket_name, Key=yaml_key, Body=yaml_content)
 
 print(f"✅ Updated YAML with {len(all_definitions)} total definitions at s3://{bucket_name}/{yaml_key}")
+
+'''
