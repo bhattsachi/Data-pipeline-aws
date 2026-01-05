@@ -180,7 +180,7 @@ Resources:
       Timeout: 60
       Command:
         Name: glueetl
-        ScriptLocation: !Sub s3://${GlueDataBucket}/scripts/csv_processor.py
+        ScriptLocation: !Sub s3://${GlueDataBucket}/scripts/csv_processor1.py
         PythonVersion: '3'
       DefaultArguments:
         '--job-language': python

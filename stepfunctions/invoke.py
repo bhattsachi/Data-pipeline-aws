@@ -59,7 +59,7 @@ for csv_key in csv_files:
 
         # Build Step Function definition with failure notification
         # Assumes an SNS topic exists for notifications
-        sns_topic_arn = "arn:aws:sns:us-east-2:615299756109:glue-job-failure-notify:2a822d67-5115-4279-9a65-3d00c72aa34d"
+        sns_topic_arn = "arn:aws:sns:us-east-2:615299756109:serverless-app-glue-job-failure-dev"
         definition = {
             "name": job_name,
             "definition": {
