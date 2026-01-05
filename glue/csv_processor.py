@@ -50,8 +50,8 @@ if record_count == 0:
     job.commit()
 else:
     # Show sample data
-    print("\nSample data:")
-    datasource.toDF().show(5)
+print("\nSample data:")
+datasource.toDF().show(5)
 
 # Transform - Add metadata columns
 df = datasource.toDF()

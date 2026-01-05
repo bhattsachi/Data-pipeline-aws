@@ -167,7 +167,7 @@ Resources:
       TopicArn: !Ref GlueJobFailureTopic
       Protocol: email
       Endpoint: sabyasachi.bhattacharjee@nttdata.com
-
+      
   CsvProcessorGlueJob:
     Type: AWS::Glue::Job
     Properties:
@@ -180,7 +180,7 @@ Resources:
       Timeout: 60
       Command:
         Name: glueetl
-        ScriptLocation: !Sub s3://${GlueDataBucket}/scripts/csv_processor1.py
+        ScriptLocation: !Sub s3://${GlueDataBucket}/scripts/csv_processor.py
         PythonVersion: '3'
       DefaultArguments:
         '--job-language': python
