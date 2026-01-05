@@ -92,7 +92,7 @@ for csv_key in csv_files:
                         "Parameters": {
                             "TopicArn": sns_topic_arn,
                             "Message": {
-                                "Fn::Sub": f"Glue job {glue_job_name} failed. Notification sent to naikwadin@magellanhealth.com."
+                                "Fn::Sub": f"Glue job {glue_job_name} failed. Notification sent to sabyasachi.bhattacharjee@nttdata.com."
                             },
                             "Subject": f"Glue Job Failure: {glue_job_name}"
                         },
