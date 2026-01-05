@@ -344,3 +344,6 @@ Outputs:
   StepFunctionsRoleArn:
     Description: Step Functions Role ARN
     Value: !GetAtt StepFunctionsRole.Arn
+  SNSTopicArn:
+    Description: SNS Topic ARN for Glue Job Failures
+    Value: !Ref GlueJobFailureTopic
