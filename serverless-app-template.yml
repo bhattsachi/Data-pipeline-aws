@@ -154,18 +154,19 @@ Resources:
                 Resource:
                   - !GetAtt GlueDataBucket.Arn
                   - !Sub ${GlueDataBucket.Arn}/*
-    GlueJobFailureTopic:
+
+  GlueJobFailureTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub ${ApplicationName}-glue-job-failure-${EnvironmentName}
       DisplayName: Glue Job Failure Notifications  
     
-    GlueJobFailureEmailSubscription:
-      Type: AWS::SNS::Subscription
-      Properties:
-        TopicArn: !Ref GlueJobFailureTopic
-        Protocol: email
-        Endpoint: sabyasachi.bhattacharjee@nttdata.com
+  GlueJobFailureEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref GlueJobFailureTopic
+      Protocol: email
+      Endpoint: sabyasachi.bhattacharjee@nttdata.com
 
   CsvProcessorGlueJob:
     Type: AWS::Glue::Job
