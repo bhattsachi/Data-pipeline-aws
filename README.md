@@ -4708,3 +4708,240 @@ aws stepfunctions start-execution \
   --state-machine-arn $STATE_MACHINE_ARN \
   --input "{\"inputPath\": \"s3://$GLUE_BUCKET/input/\", \"outputPath\": \"s3://$GLUE_BUCKET/output/\"}" \
   --region us-east-2
+
+
+#  methodArn is the Amazon Resource Name (ARN) that uniquely identifies the API Gateway method being invoked. It's automatically passed to your Lambda authorizer by API Gateway.
+
+arn:aws:execute-api:{region}:{account-id}:{api-id}/{stage}/{http-method}/{resource-path}
+
+arn:aws:execute-api:us-east-2:615299756109:abc123def4/dev/GET/health
+                    ─────────  ────────────  ──────────  ───  ───  ──────
+                       │            │            │        │    │     │
+                    Region     Account ID    API ID   Stage Method  Path
+
+                    """
+API Gateway Request Header Authorizer
+Validates Client-ID header against allowed list
+"""
+
+import os
+import json
+import boto3
+
+
+def handler(event, context):
+    """
+    Lambda Authorizer for API Gateway
+    Validates Client-ID header against allowed list
+    """
+    print(f"Event: {json.dumps(event)}")
+    
+    # Get Client-ID from headers (case-insensitive)
+    headers = event.get('headers', {})
+    client_id = (
+        headers.get('Client-ID') or 
+        headers.get('client-id') or 
+        headers.get('CLIENT-ID') or
+        headers.get('x-client-id') or
+        headers.get('X-Client-ID')
+    )
+    
+    # Get method ARN for policy
+    method_arn = event.get('methodArn', '')
+    
+    # Get valid client IDs from environment
+    valid_client_ids_str = os.environ.get('VALID_CLIENT_IDS', '')
+    valid_client_ids = [cid.strip() for cid in valid_client_ids_str.split(',') if cid.strip()]
+    
+    # Validate Client-ID
+    if not client_id:
+        return generate_policy('anonymous', 'Deny', method_arn)
+    
+    if client_id not in valid_client_ids:
+        return generate_policy(client_id, 'Deny', method_arn)
+    
+    return generate_policy(client_id, 'Allow', method_arn, context={
+        'clientId': client_id,
+        'environment': os.environ.get('ENVIRONMENT', 'dev')
+    })
+
+
+def generate_policy(principal_id, effect, resource, context=None):
+    """Generate IAM policy document for API Gateway"""
+    arn_parts = resource.split('/')
+    base_arn = '/'.join(arn_parts[:2])
+    
+    policy = {
+        'principalId': principal_id,
+        'policyDocument': {
+            'Version': '2012-10-17',
+            'Statement': [{
+                'Action': 'execute-api:Invoke',
+                'Effect': effect,
+                'Resource': f"{base_arn}/*"
+            }]
+        }
+    }
+    
+    if context:
+        policy['context'] = context
+    
+    return policy
+```
+
+---
+
+## Architecture Diagram
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  Data-pipeline-aws                                                         │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  API Gateway                                                         │   │
+│  │  ┌─────────────────┐    ┌──────────────────┐    ┌────────────────┐ │   │
+│  │  │ Client Request  │───►│ Authorizer       │───►│ Health Lambda  │ │   │
+│  │  │ + Client-ID     │    │ (authorizer.py)  │    │ (app.py)       │ │   │
+│  │  └─────────────────┘    └──────────────────┘    └────────────────┘ │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Step Functions                                                      │   │
+│  │  ┌─────────────────┐    ┌──────────────────┐    ┌────────────────┐ │   │
+│  │  │ Start           │───►│ Glue Job         │───►│ Success/Fail   │ │   │
+│  │  │                 │    │ (csv_processor)  │    │ + SNS Notify   │ │   │
+│  │  └─────────────────┘    └──────────────────┘    └────────────────┘ │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  S3 Bucket                                                          │   │
+│  │  ├── /scripts/csv_processor.py                                      │   │
+│  │  ├── /input/*.csv                                                   │   │
+│  │  └── /output/parquet/ & /output/csv/                               │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  CLIENT REQUEST                                                            │
+│  ───────────────                                                           │
+│  GET /health                                                               │
+│  Headers: Client-ID: client-app-1                                          │
+│                                                                             │
+│         │                                                                   │
+│         ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                        API GATEWAY                                   │   │
+│  │                                                                      │   │
+│  │  Step 1: Receive request                                            │   │
+│  │  Step 2: Extract Client-ID header                                   │   │
+│  │  Step 3: Call Authorizer Lambda ─────────────────────┐              │   │
+│  │                                                       │              │   │
+│  │         ┌─────────────────────────────────────────────┼──────────┐  │   │
+│  │         │                                             ▼          │  │   │
+│  │         │  ┌─────────────────────────────────────────────────┐   │  │   │
+│  │         │  │  AUTHORIZER LAMBDA (authorizer.py)              │   │  │   │
+│  │         │  │                                                  │   │  │   │
+│  │         │  │  - Validates Client-ID                          │   │  │   │
+│  │         │  │  - Returns Allow/Deny policy                    │   │  │   │
+│  │         │  └─────────────────────────────────────────────────┘   │  │   │
+│  │         │                         │                              │  │   │
+│  │         │                         │ Returns policy               │  │   │
+│  │         │                         ▼                              │  │   │
+│  │         │              ┌─────────────────────┐                   │  │   │
+│  │         │              │ Allow    │   Deny   │                   │  │   │
+│  │         │              └────┬─────┴────┬─────┘                   │  │   │
+│  │         │                   │          │                         │  │   │
+│  │         └───────────────────┼──────────┼─────────────────────────┘  │   │
+│  │                             │          │                            │   │
+│  │  Step 4a: If ALLOW ─────────┘          └───── Step 4b: If DENY     │   │
+│  │         │                                            │              │   │
+│  │         ▼                                            ▼              │   │
+│  │  ┌─────────────────┐                    ┌─────────────────────┐    │   │
+│  │  │ Call app.py     │                    │ Return 403 Forbidden│    │   │
+│  │  │ (Health Lambda) │                    │ (Never calls app.py)│    │   │
+│  │  └─────────────────┘                    └─────────────────────┘    │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+# API Gateway with Authorizer
+ApiGateway:
+  Type: AWS::Serverless::Api
+  Properties:
+    Name: !Sub ${ApplicationName}-api-${EnvironmentName}
+    StageName: !Ref EnvironmentName
+    Auth:
+      DefaultAuthorizer: ClientIdAuthorizer        # ← Use this authorizer
+      Authorizers:
+        ClientIdAuthorizer:
+          FunctionArn: !GetAtt ClientIdAuthorizerFunction.Arn  # ← Points to authorizer Lambda
+          Identity:
+            Headers:
+              - Client-ID                          # ← Extract this header
+
+# Health Check Lambda (app.py)
+HealthCheckFunction:
+  Type: AWS::Serverless::Function
+  Properties:
+    Handler: app.lambda_handler
+    CodeUri: lambda/api/
+    Events:
+      HealthGet:
+        Type: Api
+        Properties:
+          RestApiId: !Ref ApiGateway               # ← Uses the API Gateway above
+          Path: /health                            # ← (which has the authorizer)
+          Method: GET
+
+
+---
+
+## Sequence Diagram
+```
+   Client              API Gateway           Authorizer            app.py
+     │                     │                    │                    │
+     │  GET /health        │                    │                    │
+     │  Client-ID: app-1   │                    │                    │
+     │────────────────────►│                    │                    │
+     │                     │                    │                    │
+     │                     │  Invoke Lambda     │                    │
+     │                     │  with headers      │                    │
+     │                     │───────────────────►│                    │
+     │                     │                    │                    │
+     │                     │                    │  Validate          │
+     │                     │                    │  Client-ID         │
+     │                     │                    │                    │
+     │                     │  Return Policy     │                    │
+     │                     │  (Allow/Deny)      │                    │
+     │                     │◄───────────────────│                    │
+     │                     │                    │                    │
+     │                     │                    │                    │
+     │            ┌────────┴────────┐           │                    │
+     │            │                 │           │                    │
+     │         ALLOW              DENY         │                    │
+     │            │                 │           │                    │
+     │            ▼                 ▼           │                    │
+     │     ┌──────────────┐  ┌──────────┐      │                    │
+     │     │ Call app.py  │  │ Return   │      │                    │
+     │     │              │  │ 403      │      │                    │
+     │     └──────┬───────┘  └────┬─────┘      │                    │
+     │            │               │            │                    │
+     │            │  Invoke       │            │                    │
+     │            │  Lambda       │            │                    │
+     │            │───────────────┼────────────┼───────────────────►│
+     │            │               │            │                    │
+     │            │               │            │   Process request  │
+     │            │               │            │   Return response  │
+     │            │               │            │                    │
+     │            │◄──────────────┼────────────┼────────────────────│
+     │            │               │            │                    │
+     │  Response  │               │            │                    │
+     │◄───────────┤               │            │                    │
+     │            │               │            │                    │
+     │  OR        │               │            │                    │
+     │◄───────────┴───────────────┘            │                    │
+     │  403 Forbidden                          │                    │
+     │                                         │                    │
