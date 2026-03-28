@@ -1,0 +1,13 @@
+
+{
+  "Parameters": {
+    "EnvironmentName": "dev",
+    "ApplicationName": "serverless-app",
+    "LogRetentionDays": "7"
+  },
+  "Tags": {
+    "Environment": "dev",
+    "Application": "serverless-app",
+    "ManagedBy": "CloudFormation"
+  }
+}
